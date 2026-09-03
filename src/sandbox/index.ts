@@ -56,7 +56,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				customType: "sandbox-paths",
 				content: "The sandbox has been unlocked. All paths are now allowed.",
 				display: false,
-			});
+			}, { deliverAs: "followUp", triggerTurn: true });
 			refreshStatus(ctx);
 		},
 	});
@@ -147,7 +147,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 					`The sandbox has unlocked the path "${displayPath(entry.path)}". ` +
 					"Access to this path is now allowed.",
 				display: false,
-			});
+			}, { deliverAs: "followUp", triggerTurn: true });
 			refreshStatus(ctx);
 		},
 	});
