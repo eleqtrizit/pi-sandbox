@@ -2,6 +2,14 @@
 
 A security extension for the [pi coding agent](https://github.com/earendil-works/pi-coding-agent). It stops tools from reaching outside the directory where Pi is started, with opt-in escapes for symlinks and individual paths.
 
+## Quick Start
+
+```bash
+pi install https://github.com/eleqtrizit/pi-sandbox
+```
+
+Restart Pi or run `/reload`. The sandbox locks automatically on startup: tools that try to reach outside the project root are blocked and reported in the footer status line. To confirm it is active, run `/sandbox-blocked` after an attempt, or `/save-sandbox-config` to persist your sandbox setup.
+
 The sandbox intercepts the built-in path-based tools (read, write, edit, bash, grep, find, ls) through the `tool_call` event and blocks operations whose paths resolve outside the project root. For bash, it inspects `cd` targets and path-like tokens in each command segment. The guard is best effort: bash cannot be sandboxed perfectly at this level, but common escape routes (absolute paths, `../` traversal, `cd` outside the root) are blocked.
 
 ## Install
