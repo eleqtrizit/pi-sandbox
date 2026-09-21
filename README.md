@@ -49,7 +49,7 @@ The sandbox config file lives at `./.pi/sandbox.json` in the project root, with 
 | `/unlock-sandbox-symlinks` | Allow symlinks inside the sandbox to resolve outside it. Other checks stay active. Scans the sandbox for symlinks and allowlists their resolved targets. |
 | `/lock-sandbox-symlinks` | Disable symlink mode and re-tighten the sandbox. |
 | `/save-sandbox-config` | Persist the current sandbox state to the config file at `./.pi/sandbox.json` (falls back to `./.agents/sandbox.json`). |
-| `/unlock-last-path` | Allow the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Sends the unlocked path to the agent. |
+| `/unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Blocked files unlock their parent directory. Sends the unlocked directory to the agent. |
 | `/sandbox-blocked` | List the 20 most recently blocked paths with their `/unlock-last-path` index. |
 
 The footer status line always shows the current state: lock state, symlink mode, unlocked path count, and blocked attempt count.

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOME, resetState, sandboxState, unlockedPaths } from "./state.js";
-import { checkBashCommand, checkPath, checkPathToken, isCommentToken, isInsideSandbox, tokenizeCommand } from "./paths.js";
+import { checkBashCommand, checkPath, checkPathToken, isCommentToken, isInsideSandbox, tokenizeCommand, unlockTargetFor } from "./paths.js";
 
 let sandboxDir: string;
 
@@ -80,6 +80,31 @@ describe("isInsideSandbox", () => {
 			expect(isInsideSandbox(join(linkDir, "file.txt"), sandboxDir)).toBe(true);
 		} finally {
 			rmSync(linkDir, { force: true });
+		}
+	});
+});
+
+describe("unlockTargetFor", () => {
+	it("returns a blocked directory unchanged", () => {
+		expect(unlockTargetFor(join(sandboxDir, "sub"))).toBe(join(sandboxDir, "sub"));
+	});
+
+	it("returns the parent directory for a blocked file", () => {
+		expect(unlockTargetFor(join(sandboxDir, "file.txt"))).toBe(sandboxDir);
+	});
+
+	it("returns the parent directory for a path that no longer exists", () => {
+		expect(unlockTargetFor(join(sandboxDir, "sub", "missing.txt"))).toBe(join(sandboxDir, "sub"));
+	});
+
+	it("lets checkPath reach a file after unlocking its parent directory", () => {
+		const fileName = join(HOME, `.sandbox-unlock-probe-${Date.now()}`);
+		writeFileSync(fileName, "x");
+		try {
+			unlockedPaths.add(unlockTargetFor(fileName));
+			expect(checkPath(fileName, sandboxDir).allowed).toBe(true);
+		} finally {
+			rmSync(fileName, { force: true });
 		}
 	});
 });

@@ -6,8 +6,8 @@
 
 import { type ExtensionAPI, type ExtensionContext, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { blockedHistory, recordBlocked, sandboxState, unlockedPaths } from "./state.js";
-import { tryRealpath } from "./fs-utils.js";
-import { checkBashCommand, checkPath } from "./paths.js";
+import { isUnderRealPrefix, tryRealpath } from "./fs-utils.js";
+import { checkBashCommand, checkPath, unlockTargetFor } from "./paths.js";
 import { rescanSymlinkTargets } from "./symlinks.js";
 import {
 	CONFIG_BASENAME,
@@ -114,9 +114,9 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		},
 	});
 
-	// /unlock-last-path - allow the most recently blocked path (or nth-to-last)
+	// /unlock-last-path - unlock the directory of the most recently blocked path (or nth-to-last)
 	pi.registerCommand("unlock-last-path", {
-		description: "Allow the most recently blocked sandbox path, or the nth-to-last when given a number (e.g. /unlock-last-path 2)",
+		description: "Unlock the directory of the most recently blocked sandbox path, or the nth-to-last when given a number (e.g. /unlock-last-path 2). Blocked files unlock their parent directory",
 		handler: async (args, ctx) => {
 			const arg = args.trim();
 			const n = arg.length > 0 ? parseInt(arg, 10) : 1;
@@ -134,9 +134,15 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				return;
 			}
 			const entry = blockedHistory[idx];
-			unlockedPaths.add(entry.path);
+			// Directory blocks unlock the directory itself; file blocks unlock
+			// the parent directory so the whole subtree becomes reachable.
+			const target = unlockTargetFor(entry.path);
+			unlockedPaths.add(target);
+			const unlockedLine = target === entry.path
+				? `🔓 Unlocked: ${displayPath(entry.path)}`
+				: `🔓 Unlocked: ${displayPath(target)} (parent directory of ${displayPath(entry.path)})`;
 			ctx.ui.notify(
-				`🔓 Unblocked: ${displayPath(entry.path)}\n` +
+				`${unlockedLine}\n` +
 				`   blocked by ${entry.tool} (${ageMs(entry.timestamp)} ago), source: "${entry.original}"\n` +
 				`   Run /save-sandbox-config to persist across sessions.`,
 				"info",
@@ -144,8 +150,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			pi.sendMessage({
 				customType: "sandbox-paths",
 				content:
-					`The sandbox has unlocked the path "${displayPath(entry.path)}". ` +
-					"Access to this path is now allowed.",
+					`The sandbox has unlocked the path "${displayPath(target)}". ` +
+					"Access to this directory and everything under it is now allowed.",
 				display: false,
 			}, { deliverAs: "followUp", triggerTurn: true });
 			refreshStatus(ctx);
@@ -164,7 +170,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			const start = Math.max(0, blockedHistory.length - 20);
 			for (let i = blockedHistory.length - 1, pos = 1; i >= start; i--, pos++) {
 				const e = blockedHistory[i];
-				const tag = unlockedPaths.has(e.path) ? " [unlocked]" : "";
+				const tag = [...unlockedPaths].some((p) => isUnderRealPrefix(e.path, p)) ? " [unlocked]" : "";
 				lines.push(`  [${pos}] ${displayPath(e.path)}  (${e.tool}, ${ageMs(e.timestamp)} ago, src: "${e.original}")${tag}`);
 			}
 			lines.push("Use /unlock-last-path [n] to allow a path (default n=1, the newest).");

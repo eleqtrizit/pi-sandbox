@@ -4,8 +4,8 @@
  * tool_call interception in index.ts) turn the returned verdicts into blocks.
  */
 
-import { existsSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, statSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
 import { HOME, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, tryRealpath } from "./fs-utils.js";
 import { refreshAndRecheck } from "./symlinks.js";
@@ -155,6 +155,23 @@ export function checkPath(path: string, sandboxDir: string): PathCheckResult {
 		};
 	}
 	return { allowed: true };
+}
+
+/**
+ * Resolve the path that /unlock-last-path unlocks for a blocked path.
+ * Blocked directories unlock themselves; blocked files unlock their parent
+ * directory so the whole subtree becomes reachable. A path that no longer
+ * exists (a blocked write to a new file) unlocks its parent too.
+ */
+export function unlockTargetFor(path: string): string {
+	try {
+		if (statSync(path).isDirectory()) {
+			return path;
+		}
+	} catch {
+		// Missing path: the parent directory is the meaningful unlock target.
+	}
+	return dirname(path);
 }
 
 /**
