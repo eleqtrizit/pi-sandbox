@@ -278,12 +278,51 @@ export function checkPathToken(token: string, sandboxDir: string): PathCheckResu
 }
 
 /**
+ * Remove heredoc bodies from a bash command before path scanning. Agents
+ * routinely use `cat >> file <<'EOF' ... EOF` to append file content, and the
+ * body routinely contains standalone "/" or path-like text (markdown trees,
+ * code samples) that must not be treated as bash path references.
+ *
+ * A line containing a `<<` heredoc operator (optionally `<<-`, with the
+ * delimiter optionally quoted) opens a heredoc; all lines after it are dropped
+ * until a line whose trimmed content equals the delimiter. The operator line
+ * itself is kept so its redirect target and cd targets are still checked.
+ *
+ * This is deliberately line-based and only understands the common
+ * `cmd <<'DELIM'` / `cmd << DELIM` form (operator at line end or followed by
+ * whitespace). Quoted strings on the operator line containing "<<" are not
+ * specially handled — a false heredoc open would only skip a few lines of
+ * scanning, never produce a false block.
+ */
+export function stripHeredocBodies(command: string): string {
+	const kept: string[] = [];
+	let terminator: string | null = null;
+
+	for (const line of command.split("\n")) {
+		if (terminator !== null) {
+			if (line.trim() === terminator) {
+				terminator = null;
+			}
+			continue;
+		}
+		kept.push(line);
+		const match = line.match(/(^|\s)<<-?\s*(['"]?)([A-Za-z0-9_]+)\2(\s|$)/);
+		if (match) {
+			terminator = match[3];
+		}
+	}
+
+	return kept.join("\n");
+}
+
+/**
  * Best-effort bash command sandboxing. Splits on command separators, checks
  * every `cd` target, then checks each token for path-like references that
- * resolve outside the sandbox.
+ * resolve outside the sandbox. Heredoc bodies (see {@link stripHeredocBodies})
+ * are stripped first so file content passed via `<<'EOF'` is never scanned.
  */
 export function checkBashCommand(command: string, sandboxDir: string): PathCheckResult & { original?: string } {
-	const trimmed = command.trim();
+	const trimmed = stripHeredocBodies(command).trim();
 
 	if (!trimmed || trimmed.startsWith("#")) {
 		return { allowed: true };

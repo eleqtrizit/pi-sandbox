@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOME, resetState, sandboxState, unlockedPaths } from "./state.js";
-import { checkBashCommand, checkPath, checkPathToken, isCommentToken, isInsideSandbox, tokenizeCommand, unlockTargetFor } from "./paths.js";
+import { checkBashCommand, checkPath, checkPathToken, isCommentToken, isInsideSandbox, stripHeredocBodies, tokenizeCommand, unlockTargetFor } from "./paths.js";
 
 let sandboxDir: string;
 
@@ -199,5 +199,49 @@ describe("checkBashCommand", () => {
 
 	it("allows nonexistent path-like tokens such as regex patterns", () => {
 		expect(checkBashCommand("rg /definitely/not/here/", sandboxDir).allowed).toBe(true);
+	});
+
+	it("allows path-like content inside heredoc bodies", () => {
+		const command = [
+			"cat >> AGENTS.md <<'EOF'",
+			"/",
+			`${HOME}/.zshrc`,
+			"EOF",
+		].join("\n");
+		expect(checkBashCommand(command, sandboxDir).allowed).toBe(true);
+	});
+
+	it("allows heredoc bodies with unquoted delimiters and <<-", () => {
+		const command = [`cat >> notes.md <<EOF`, HOME, `EOF`, `cat >> other.md <<-EOF`, `${HOME}/.zshrc`, `EOF`].join("\n");
+		expect(checkBashCommand(command, sandboxDir).allowed).toBe(true);
+	});
+
+	it("still checks the heredoc write target outside the sandbox", () => {
+		const command = [`cat >> ${HOME}/.zshrc <<'EOF'`, "body text", "EOF"].join("\n");
+		const result = checkBashCommand(command, sandboxDir);
+		expect(result.allowed).toBe(false);
+		expect(result.original).toBe(`${HOME}/.zshrc`);
+	});
+
+	it("resumes scanning after the heredoc terminator", () => {
+		const command = [`cat >> file.md <<'EOF'`, "/", "EOF", `cat ${HOME}/.zshrc`].join("\n");
+		expect(checkBashCommand(command, sandboxDir).allowed).toBe(false);
+	});
+});
+
+describe("stripHeredocBodies", () => {
+	it("removes heredoc bodies but keeps operator lines", () => {
+		const stripped = stripHeredocBodies("cat >> f.md <<'EOF'\n/ line\nHOME ref\nEOF\nwc -l f.md");
+		expect(stripped.split("\n")).toEqual(["cat >> f.md <<'EOF'", "wc -l f.md"]);
+	});
+
+	it("keeps commands without heredocs unchanged", () => {
+		const command = "ls -la /tmp && echo done";
+		expect(stripHeredocBodies(command)).toBe(command);
+	});
+
+	it("matches the delimiter word exactly; other lines are body content", () => {
+		const stripped = stripHeredocBodies("cat <<EOF\nEOF suffix\n/home/outside\nEOF\nls");
+		expect(stripped.split("\n")).toEqual(["cat <<EOF", "ls"]);
 	});
 });
