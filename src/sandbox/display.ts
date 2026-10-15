@@ -3,6 +3,7 @@
  */
 
 import { HOME, blockedHistory, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
+import { EXACT_ALLOWED_PATHS, PREFIX_ALLOWED_PATHS, homeAllowlist } from "./allowlist.js";
 import { relativeSafe } from "./fs-utils.js";
 import type { SandboxConfig } from "./config.js";
 
@@ -34,7 +35,6 @@ export function statusLine(): string {
 /**
  * Build the startup banner. Always lists the always-allowed paths so the user
  * can see exactly what the sandbox permits, plus allowlisted symlink targets.
- * The always-allowed lists mirror the ones in paths.ts; keep them in sync.
  */
 export function buildBanner(cwd: string, configPath: string | null, cfg: SandboxConfig | null): string {
 	const lines: string[] = [];
@@ -47,11 +47,11 @@ export function buildBanner(cwd: string, configPath: string | null, cfg: Sandbox
 	}
 	lines.push(`   ${statusLine()}`);
 	lines.push("   Always-allowed paths:");
-	for (const p of [`${HOME}/.pi`, `${HOME}/.agents`]) {
-		lines.push(`     ${displayPath(p)}`);
+	for (const { path, writable } of homeAllowlist()) {
+		lines.push(`     ${displayPath(path)} (${writable ? "read-write" : "read-only"})`);
 	}
-	lines.push("     exact: /dev/null  /dev/zero  /dev/stdout  /dev/stderr  /dev/stdin  /dev/tty  /dev/random  /dev/urandom  /dev/full");
-	lines.push("     prefix: /dev/fd  /proc/self/fd  /tmp  /var/folders");
+	lines.push(`     exact: ${[...EXACT_ALLOWED_PATHS].join("  ")}`);
+	lines.push(`     prefix: ${PREFIX_ALLOWED_PATHS.join("  ")}`);
 	if (symlinkTargets.size === 0) {
 		lines.push("   Symlink targets: (none)");
 	} else {

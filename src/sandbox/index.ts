@@ -216,7 +216,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		// check applies here. These are pi's in-process path tools.
 		if (isToolCallEventType("read", event) || isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
 			const path = event.input.path as string;
-			const result = checkPath(path, ctx.cwd);
+			const result = checkPath(path, ctx.cwd, event.toolName === "read" ? "read" : "write");
 
 			if (!result.allowed) {
 				recordBlocked(path, result.resolved ?? path, event.toolName, tryRealpath);
@@ -232,7 +232,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			const input = event.input as { path?: string; scope?: string };
 			const target = input.path ?? input.scope;
 			if (target) {
-				const result = checkPath(target, ctx.cwd);
+				const result = checkPath(target, ctx.cwd, "read");
 				if (!result.allowed) {
 					recordBlocked(target, result.resolved ?? target, event.toolName, tryRealpath);
 					if (ctx.hasUI) {

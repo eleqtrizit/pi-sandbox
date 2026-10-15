@@ -46,7 +46,7 @@ These paths are allowed from any sandbox, in both layers:
 - `~/.pi` and `~/.agents`
 - Device and pseudo-filesystem paths: `/dev/null`, `/dev/zero`, `/dev/stdout`, `/dev/stderr`, `/dev/stdin`, `/dev/tty`, `/dev/random`, `/dev/urandom`, `/dev/full`
 - Prefix trees: `/dev/fd`, `/proc/self/fd`, `/tmp`, `/var/folders`
-- Read-only toolchain and config paths under `$HOME`, so normal CLIs keep working: `~/.gitconfig`, `~/.config/git`, `~/.volta`, `~/.local/bin`, `~/.cargo/bin`. Secrets like `~/.ssh`, `~/.gnupg`, and `~/.aws` are deliberately not listed.
+- Read-only toolchain and config paths under `$HOME`, so normal CLIs keep working: `~/.gitconfig`, `~/.config/git`, `~/.volta`, `~/.local/bin`, `~/.local/share/uv`, `~/.cargo/bin`. Secrets like `~/.ssh`, `~/.gnupg`, and `~/.aws` are deliberately not listed.
 - Read-write cache paths under `$HOME` so package managers keep working: `~/.cache`, `~/.npm`.
 
 ### Symlinks inside the sandbox
@@ -79,6 +79,7 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | `fs-utils.ts` | Realpath, tilde expansion, and prefix comparison helpers |
 | `symlinks.ts` | Symlink scanning (fd with a manual-walk fallback) for allowlisted targets |
 | `os-sandbox.ts` | Seatbelt profile generation, `sandbox-exec` wrapping, bubblewrap argument generation with an AppArmor-aware availability probe |
+| `allowlist.ts` | The single list of default allowed paths, shared by both layers and the banner |
 | `paths.ts` | Allow lists and `checkPath` for the in-process tools |
 | `config.ts` | Config load, save, apply, and snapshot |
 | `display.ts` | Footer status line and startup banner |

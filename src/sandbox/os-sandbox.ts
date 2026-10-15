@@ -21,36 +21,17 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { homePaths } from "./allowlist.js";
 import { tryRealpath } from "./fs-utils.js";
 
-/** Paths that stay read-write inside every profile. */
-export function baseReadWritePaths(): string[] {
-	return [join(homedir(), ".pi"), join(homedir(), ".agents")];
-}
-
-/**
- * Toolchain and config paths under $HOME that stay readable so normal CLIs
- * keep working (node/npm via volta, cargo, user-local bins, git config).
- * Secrets like ~/.ssh, ~/.gnupg and ~/.aws are deliberately not listed.
- */
+/** Read-only home paths from the shared allowlist (toolchains, git config). */
 export function homeReadOnlyPaths(): string[] {
-	const home = homedir();
-	return [
-		join(home, ".gitconfig"),
-		join(home, ".config", "git"),
-		join(home, ".volta"),
-		join(home, ".local", "bin"),
-		join(home, ".cargo", "bin"),
-	];
+	return homePaths(false);
 }
 
-/**
- * Cache and scratch paths under $HOME that stay read-write so package
- * managers and build tools keep working inside the sandbox.
- */
+/** Read-write home paths from the shared allowlist (pi config, caches). */
 export function homeReadWritePaths(): string[] {
-	const home = homedir();
-	return [join(home, ".cache"), join(home, ".npm")];
+	return homePaths(true);
 }
 
 /**
@@ -129,7 +110,7 @@ export function buildSeatbeltProfile({ sandboxDir, readWritePaths }: ProfileInpu
 		"(allow default)",
 		`(deny file-read* file-write* (subpath "${sbplEscape(homedir())}"))`,
 	];
-	const rwRoots = [resolve(sandboxDir), ...readWritePaths.map((p) => resolve(p)), ...baseReadWritePaths(), ...homeReadWritePaths()];
+	const rwRoots = [resolve(sandboxDir), ...readWritePaths.map((p) => resolve(p)), ...homeReadWritePaths()];
 	for (const p of rwRoots) {
 		lines.push(`(allow file-read* (subpath "${sbplEscape(p)}"))`);
 		lines.push(`(allow file-write* (subpath "${sbplEscape(p)}"))`);
@@ -144,10 +125,6 @@ export function buildSeatbeltProfile({ sandboxDir, readWritePaths }: ProfileInpu
 	// Toolchains under the home directory stay readable (read-only).
 	for (const p of homeReadOnlyPaths()) {
 		lines.push(`(allow file-read* (subpath "${sbplEscape(p)}"))`);
-	}
-	// Read-only identity/config files commands commonly need.
-	for (const p of [join(homedir(), ".gitconfig")]) {
-		lines.push(`(allow file-read* (literal "${sbplEscape(p)}"))`);
 	}
 	return `${lines.join("\n")}\n`;
 }
@@ -184,7 +161,6 @@ export function buildBwrapArgs({ sandboxDir, readWritePaths }: ProfileInput): st
 	const rw = existingRealPaths([
 		resolve(sandboxDir),
 		...readWritePaths,
-		...baseReadWritePaths(),
 		...homeReadWritePaths(),
 	]);
 	const args = [
@@ -260,7 +236,6 @@ export function buildLandlockArgs({ sandboxDir, readWritePaths }: ProfileInput):
 	const rw = existingRealPaths([
 		resolve(sandboxDir),
 		...readWritePaths,
-		...baseReadWritePaths(),
 		...homeReadWritePaths(),
 	]);
 	const ro = existingRealPaths(homeReadOnlyPaths()).filter((p) => !isUnderAny(p, rw));

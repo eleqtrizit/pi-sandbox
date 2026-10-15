@@ -46,6 +46,13 @@ describe("checkPath", () => {
 		expect(checkPath(`${HOME}/.pi/settings.json`, sandboxDir).allowed).toBe(true);
 	});
 
+	it("allows reads but not writes under read-only home entries", () => {
+		const p = `${HOME}/.local/share/uv/python/bin/python3`;
+		expect(checkPath(p, sandboxDir, "read").allowed).toBe(true);
+		expect(checkPath(p, sandboxDir, "write").allowed).toBe(false);
+		expect(checkPath(p, sandboxDir).allowed).toBe(false);
+	});
+
 	it("allows paths under the always-allowed ~/.agents prefix", () => {
 		expect(checkPath(`${HOME}/.agents/skills`, sandboxDir).allowed).toBe(true);
 	});

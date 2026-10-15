@@ -6,56 +6,23 @@
 
 import { existsSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { HOME, symlinkTargets, unlockedPaths } from "./state.js";
+import { EXACT_ALLOWED_PATHS, PREFIX_ALLOWED_PATHS, homeAllowlist } from "./allowlist.js";
+import { symlinkTargets, unlockedPaths } from "./state.js";
 import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, tryRealpath } from "./fs-utils.js";
 
-/**
- * Paths that are always allowed, regardless of sandbox boundaries. These are
- * resolved at module load time.
- */
-const ALLOWED_PATHS: string[] = [
-	resolve(`${HOME}/.pi`),
-	resolve(`${HOME}/.agents`),
-];
-
-/**
- * Standard device and pseudo-filesystem paths safe to reference from any sandbox.
- * Resolved at module load time.
- */
-const EXACT_ALLOWED_PATHS: ReadonlySet<string> = new Set([
-	resolve("/dev/null"),
-	resolve("/dev/zero"),
-	resolve("/dev/stdout"),
-	resolve("/dev/stderr"),
-	resolve("/dev/stdin"),
-	resolve("/dev/tty"),
-	resolve("/dev/random"),
-	resolve("/dev/urandom"),
-	resolve("/dev/full"),
-]);
-
-/**
- * Path prefixes for innocuous pseudo-filesystem trees (e.g. fd redirects)
- * and scratch/temp directories: the shared /tmp and the macOS per-user
- * /var/folders (symlinked to /private/var/folders, resolved via realpath).
- */
-const PREFIX_ALLOWED_PATHS: string[] = [
-	resolve("/dev/fd"),
-	resolve("/proc/self/fd"),
-	resolve("/tmp"),
-	resolve("/var/folders"),
-];
+/** What a tool does with a path: read-only home entries allow only "read". */
+export type PathAccess = "read" | "write";
 
 /**
  * Check if a resolved path is under any of the always-allowed paths.
  * Checks both the original path and its realpath'd (symlink-resolved) form, so
  * that:
- *   - Symlinks inside ALLOWED_PATHS are allowed because the original path is
+ *   - Symlinks inside the allowlist are allowed because the original path is
  *     under the allowed root.
- *   - Symlinks pointing into ALLOWED_PATHS are allowed because the realpath'd
+ *   - Symlinks pointing into the allowlist are allowed because the realpath'd
  *     path is under the allowed root.
  */
-export function isAllowedPath(resolvedPath: string): boolean {
+export function isAllowedPath(resolvedPath: string, access: PathAccess = "write"): boolean {
 	const resolved = resolve(resolvedPath);
 	const normalized = realpathThroughExisting(resolved);
 
@@ -74,7 +41,9 @@ export function isAllowedPath(resolvedPath: string): boolean {
 			return true;
 		}
 
-		if (ALLOWED_PATHS.some((allowed) => isUnderRealPrefix(candidate, allowed))) {
+		// Read-only home entries (toolchains) never satisfy a write.
+		const homeEntries = homeAllowlist().filter((entry) => entry.writable || access === "read");
+		if (homeEntries.some((entry) => isUnderRealPrefix(candidate, entry.path))) {
 			return true;
 		}
 
@@ -122,12 +91,13 @@ export interface PathCheckResult {
  * Normalize a path and check it against the sandbox.
  * Always-allowed paths bypass the sandbox check. Symlinks are resolved via
  * realpath before comparison, so symlinked paths match against resolved
- * sandbox dirs. Relative paths resolve against the sandbox root.
+ * sandbox dirs. Relative paths resolve against the sandbox root. `access`
+ * defaults to "write", the stricter mode.
  */
-export function checkPath(path: string, sandboxDir: string): PathCheckResult {
+export function checkPath(path: string, sandboxDir: string, access: PathAccess = "write"): PathCheckResult {
 	const realSandboxDir = tryRealpath(resolve(sandboxDir));
 	const resolved = resolve(realSandboxDir, expandTilde(path));
-	if (isAllowedPath(resolved)) {
+	if (isAllowedPath(resolved, access)) {
 		return { allowed: true };
 	}
 	if (!isInsideSandbox(resolved, realSandboxDir)) {
