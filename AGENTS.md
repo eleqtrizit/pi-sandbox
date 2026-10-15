@@ -27,18 +27,26 @@ Invariants:
   scanned at `session_start` and by `/save-sandbox-config` only. Re-scanning
   let an agent allowlist any path it can name by creating `ln -s <path> l` in
   its own workspace (fixed in 159e4df after a probe demonstrated it).
-- **Bash fails closed** when the platform sandbox binary is missing. Linux is
-  the open integration point: implement `buildBwrapArgs()` in
-  `src/sandbox/os-sandbox.ts` (bubblewrap). Until then, Linux bash calls block
-  with an explanation.
+- **Bash fails closed** when the platform sandbox is unavailable. On Linux that
+  is decided by `probeBwrap()` in `src/sandbox/os-sandbox.ts`: it runs a real
+  bubblewrap command once, because Ubuntu 24.04+ AppArmor can restrict
+  unprivileged user namespaces even when bwrap is installed. When the probe
+  fails, Linux bash calls block with the probe reason.
 - **All CLIs stay runnable.** The Seatbelt profile is `(allow default)` plus a
   deny on file access under the home directory, re-allowing the sandbox dir,
   scanned symlink targets, unlocked paths, `~/.pi`, `~/.agents`, and read-only
-  `~/.gitconfig`. Denied opens fail with normal OS errors.
+  `~/.gitconfig`. Denied opens fail with normal OS errors. Linux uses the same
+  policy with bubblewrap: the root stays bind-mounted read-write, a tmpfs over
+  `$HOME` hides the real home, allowed roots are bound back in, toolchain dirs
+  (`~/.volta`, `~/.local/bin`, `~/.cargo/bin`, git config) are re-exposed
+  read-only and caches (`~/.cache`, `~/.npm`) read-write, and PIDs are unshared
+  so `/proc/<pid>/root` cannot reach the real home. A blocked path surfaces as
+  ENOENT, not EPERM — tests must assert non-zero exit, not a specific error.
 - **The config file is a trust anchor.** Only slash commands may write it; any
   tool input mentioning it is blocked.
-- The test suite includes a live seatbelt enforcement test that runs only when
-  `/usr/bin/sandbox-exec` exists; keep it passing.
+- The test suite includes live enforcement tests: seatbelt runs only when
+  `/usr/bin/sandbox-exec` exists, bubblewrap only when the bwrap probe passes;
+  keep both passing.
 
 See README.md for the full module table and command list.
 

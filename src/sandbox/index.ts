@@ -61,8 +61,9 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			}
 			if (!osSandbox || !osSandbox.available) {
 				const what = osSandbox?.kind === "bubblewrap" ? "bubblewrap (bwrap)" : "the OS sandbox";
+				const why = osSandbox?.unavailableReason ? `: ${osSandbox.unavailableReason}` : "";
 				throw new Error(
-					`Sandbox blocked: ${what} is not available on this platform. ` +
+					`Sandbox blocked: ${what} is not available on this platform${why}. ` +
 					"Install it, or disable confinement with /unlock-sandbox.",
 				);
 			}

@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,12 +9,18 @@ import {
 	buildSeatbeltProfile,
 	detectOsSandbox,
 	ensureProfileFile,
+	existingRealPaths,
+	homeReadOnlyPaths,
+	homeReadWritePaths,
+	probeBwrap,
 	sbplEscape,
 	shQuote,
 	wrapWithSeatbelt,
 } from "./os-sandbox.js";
 
 const SEATBELT = existsSync("/usr/bin/sandbox-exec");
+const LINUX = process.platform === "linux";
+const BWRAP = LINUX && probeBwrap().available;
 
 describe("sbplEscape", () => {
 	it("escapes backslashes and double quotes for profile literals", () => {
@@ -47,6 +53,17 @@ describe("buildSeatbeltProfile", () => {
 		const profile = buildSeatbeltProfile({ sandboxDir: '/ws/a"b', readWritePaths: [] });
 		expect(profile).toContain('(subpath "/ws/a\\"b")');
 	});
+
+	it("re-allows toolchains read-only and caches read-write for parity with Linux", () => {
+		const profile = buildSeatbeltProfile({ sandboxDir: "/ws/x", readWritePaths: [] });
+		for (const p of homeReadWritePaths()) {
+			expect(profile).toContain(`(allow file-read* (subpath "${p}"))`);
+			expect(profile).toContain(`(allow file-write* (subpath "${p}"))`);
+		}
+		for (const p of homeReadOnlyPaths()) {
+			expect(profile).toContain(`(allow file-read* (subpath "${p}"))`);
+		}
+	});
 });
 
 describe("ensureProfileFile", () => {
@@ -67,9 +84,83 @@ describe("wrapWithSeatbelt", () => {
 	});
 });
 
+describe("existingRealPaths", () => {
+	it("drops missing paths, realpaths, dedupes, and sorts parents first", () => {
+		const parent = mkdtempSync(join(tmpdir(), "sb-real-"));
+		const child = join(parent, "child");
+		mkdirSync(child);
+		try {
+			const out = existingRealPaths([child, parent, join(parent, "missing"), parent]);
+			expect(out).toEqual([parent, child]);
+		} finally {
+			rmSync(parent, { recursive: true, force: true });
+		}
+	});
+});
+
 describe("buildBwrapArgs", () => {
-	it("throws with a clear message until Linux integration lands", () => {
-		expect(() => buildBwrapArgs({ sandboxDir: "/ws", readWritePaths: [] })).toThrow(/not implemented/);
+	it("unshares pids, mounts a fresh /proc, and tmpfs-overlays the home dir before any bind", () => {
+		const sandbox = mkdtempSync(join(tmpdir(), "sb-args-"));
+		try {
+			const args = buildBwrapArgs({ sandboxDir: sandbox, readWritePaths: [] });
+			const tmpfsAt = args.indexOf("--tmpfs");
+			expect(tmpfsAt).toBeGreaterThan(-1);
+			expect(args[tmpfsAt + 1]).toBe(homedir());
+			expect(args).toContain("--unshare-pid");
+			expect(args.indexOf("--proc")).toBeGreaterThan(args.indexOf("--dev-bind"));
+			expect(args.indexOf("--tmpfs")).toBeGreaterThan(args.indexOf("--dev-bind"));
+			expect(args.indexOf("--tmpfs")).toBeLessThan(args.indexOf("--bind-try"));
+		} finally {
+			rmSync(sandbox, { recursive: true, force: true });
+		}
+	});
+
+	it("binds the sandbox dir and extra roots read-write, parents before children, deduped", () => {
+		const parent = mkdtempSync(join(tmpdir(), "sb-binds-"));
+		const child = join(parent, "child");
+		mkdirSync(child);
+		try {
+			const args = buildBwrapArgs({ sandboxDir: child, readWritePaths: [parent, parent] });
+			const binds = args.filter((_, i) => args[i - 1] === "--bind-try");
+			expect(binds).toContain(parent);
+			expect(binds).toContain(child);
+			expect(binds.indexOf(parent)).toBeLessThan(binds.indexOf(child));
+			expect(binds.filter((p) => p === parent)).toHaveLength(1);
+		} finally {
+			rmSync(parent, { recursive: true, force: true });
+		}
+	});
+
+	it("re-exposes toolchains under $HOME read-only and ends with --chdir to the sandbox dir", () => {
+		const sandbox = mkdtempSync(join(tmpdir(), "sb-chdir-"));
+		try {
+			const args = buildBwrapArgs({ sandboxDir: sandbox, readWritePaths: [] });
+			const rw = args.filter((_, i) => args[i - 1] === "--bind-try");
+			for (const p of homeReadOnlyPaths()) {
+				if (!existsSync(p)) continue;
+				if (rw.includes(p)) continue; // an rw root wins over a ro bind
+				expect(args.join(" ")).toContain(`--ro-bind-try ${p} ${p}`);
+			}
+			expect(args[args.length - 2]).toBe("--chdir");
+			expect(args[args.length - 1]).toBe(sandbox);
+		} finally {
+			rmSync(sandbox, { recursive: true, force: true });
+		}
+	});
+});
+
+describe.skipIf(!LINUX)("linux bwrap wrap", () => {
+	it("uses the absolute bwrap binary and quotes the command", () => {
+		const sandbox = mkdtempSync(join(tmpdir(), "sb-wrap-"));
+		try {
+			const runner = detectOsSandbox();
+			const wrapped = runner!.wrap("echo 'hi'", { sandboxDir: sandbox, readWritePaths: [] });
+			expect(wrapped.startsWith("'/usr/bin/bwrap' '--die-with-parent'")).toBe(true);
+			expect(wrapped).toContain("'--unshare-pid'");
+			expect(wrapped.endsWith(`'/bin/bash' '-c' ${shQuote("echo 'hi'")}`)).toBe(true);
+		} finally {
+			rmSync(sandbox, { recursive: true, force: true });
+		}
 	});
 });
 
@@ -120,6 +211,48 @@ describe.skipIf(!SEATBELT || process.platform !== "darwin")("seatbelt enforcemen
 			}
 		} finally {
 			rmSync(sandbox, { recursive: true, force: true });
+		}
+	});
+});
+
+/** Live kernel check: run only where bwrap probes clean on Linux. */
+describe.skipIf(!BWRAP)("bubblewrap enforcement", () => {
+	it("blocks reads outside the sandbox and allows reads and writes inside it", () => {
+		const sandbox = mkdtempSync(join(HOME, ".bwrap-sb-"));
+		const outside = mkdtempSync(join(HOME, ".bwrap-out-"));
+		writeFileSync(join(sandbox, "inside.txt"), "inside-ok");
+		writeFileSync(join(outside, "secret.txt"), "outside-secret");
+		try {
+			const runner = detectOsSandbox();
+			const run = (cmd: string): { out: string; code: number } => {
+				try {
+					const out = execSync(runner!.wrap(cmd, { sandboxDir: sandbox, readWritePaths: [] }), {
+						encoding: "utf8",
+						stdio: "pipe",
+						cwd: sandbox,
+					});
+					return { out, code: 0 };
+				} catch (e) {
+					const err = e as { stdout?: string; status?: number };
+					return { out: err.stdout ?? "", code: err.status ?? 1 };
+				}
+			};
+			expect(run("cat inside.txt").out.trim()).toBe("inside-ok");
+			expect(run("echo write-ok > wrote.txt && cat wrote.txt").out.trim()).toBe("write-ok");
+			// Literal path, variable path, glob, nested shell, interpreter:
+			// the kernel must refuse all of them.
+			expect(run(`cat ${join(outside, "secret.txt")}`).code).not.toBe(0);
+			expect(run(`P=${outside}; cat "$P/secret.txt"`).code).not.toBe(0);
+			expect(run("cat ../*/secret.txt").code).not.toBe(0);
+			expect(run(`echo "cat ${join(outside, "secret.txt")}" | sh`).code).not.toBe(0);
+			expect(run(`python3 -c "print(open('${join(outside, "secret.txt")}').read())"`).code).not.toBe(0);
+			// With pids unshared, /proc/1/root must not reach the real home.
+			expect(run(`cat /proc/1/root${join(outside, "secret.txt")}`).code).not.toBe(0);
+			// Normal CLIs keep working: node comes from the toolchain roots or /.
+			expect(run("node --version").code).toBe(0);
+		} finally {
+			rmSync(sandbox, { recursive: true, force: true });
+			rmSync(outside, { recursive: true, force: true });
 		}
 	});
 });
