@@ -5,6 +5,43 @@
 - Do not keep template/sample tools (e.g. `hello_world`, `echo`, `/template`) in this package. Remove them when real functionality exists.
 - Always write unit tests for new logic. Every extracted module gets tests committed with it; "defer tests" is not an option.
 
+## Architecture
+
+Two enforcement layers; keep both in mind before changing anything.
+
+1. **Bash: OS-level confinement.** `src/sandbox/index.ts` replaces the built-in
+   bash tool (via `createBashTool` + `spawnHook`) and wraps every command in
+   `sandbox-exec` with a Seatbelt profile built by `src/sandbox/os-sandbox.ts`.
+   The kernel enforces the rules, so runtime-built paths (variables, globs,
+   nested shells, interpreters, arena scripts) are confined like literal ones.
+   A probe report in this repo's history: the old text scanning layer could be
+   bypassed by every one of those. Programs are never restricted; only file
+   access is.
+2. **In-process tools** (`read`, `write`, `edit`, `grep`, `find`, `ls`): they
+   run inside pi's own process, so `checkPath` in `src/sandbox/paths.ts` does a
+   realpath containment test. The OS sandbox cannot cover these.
+
+Invariants:
+
+- **Never re-allowlist symlink targets on a per-command basis.** Targets are
+  scanned at `session_start` and by `/save-sandbox-config` only. Re-scanning
+  let an agent allowlist any path it can name by creating `ln -s <path> l` in
+  its own workspace (fixed in 159e4df after a probe demonstrated it).
+- **Bash fails closed** when the platform sandbox binary is missing. Linux is
+  the open integration point: implement `buildBwrapArgs()` in
+  `src/sandbox/os-sandbox.ts` (bubblewrap). Until then, Linux bash calls block
+  with an explanation.
+- **All CLIs stay runnable.** The Seatbelt profile is `(allow default)` plus a
+  deny on file access under the home directory, re-allowing the sandbox dir,
+  scanned symlink targets, unlocked paths, `~/.pi`, `~/.agents`, and read-only
+  `~/.gitconfig`. Denied opens fail with normal OS errors.
+- **The config file is a trust anchor.** Only slash commands may write it; any
+  tool input mentioning it is blocked.
+- The test suite includes a live seatbelt enforcement test that runs only when
+  `/usr/bin/sandbox-exec` exists; keep it passing.
+
+See README.md for the full module table and command list.
+
 ## 🚨 HARD GATE: Template Checkout Check (BLOCKING)
 
 **Before ANY other step — no installs, no edits, no file creation — verify this checkout is not still the untouched template. Two acceptable states:**
