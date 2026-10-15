@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -39,6 +39,11 @@ describe("shQuote", () => {
 		expect(shQuote("a b")).toBe("'a b'");
 	});
 });
+
+/** Temp dir with symlinks resolved: macOS tmpdir() is under the /var -> /private/var link. */
+function realTmpDir(prefix: string): string {
+	return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+}
 
 describe("buildSeatbeltProfile", () => {
 	it("denies the home directory and re-allows the sandbox and extra roots", () => {
@@ -89,15 +94,16 @@ describe("metadataPaths", () => {
 
 describe("buildSeatbeltProfile ancestor metadata", () => {
 	it("allows stat of the ancestor chain, keeping content reads denied", () => {
+		const home = homedir();
 		const profile = buildSeatbeltProfile({
-			sandboxDir: "/Users/u/repos/proj",
+			sandboxDir: join(home, "repos", "proj"),
 			readWritePaths: [],
 		});
-		expect(profile).toContain('(allow file-read-metadata (literal "/Users/u"))');
-		expect(profile).toContain('(allow file-read-metadata (literal "/Users/u/repos"))');
-		expect(profile).toContain('(allow file-read-metadata (literal "/Users/u/repos/proj"))');
+		expect(profile).toContain(`(allow file-read-metadata (literal "${home}"))`);
+		expect(profile).toContain(`(allow file-read-metadata (literal "${join(home, "repos")}"))`);
+		expect(profile).toContain(`(allow file-read-metadata (literal "${join(home, "repos", "proj")}"))`);
 		// No data-level read of the ancestors creeps in.
-		expect(profile).not.toContain('(allow file-read* (literal "/Users/u/repos"))');
+		expect(profile).not.toContain(`(allow file-read* (literal "${join(home, "repos")}"))`);
 	});
 });
 
@@ -121,7 +127,7 @@ describe("wrapWithSeatbelt", () => {
 
 describe("existingRealPaths", () => {
 	it("drops missing paths, realpaths, dedupes, and sorts parents first", () => {
-		const parent = mkdtempSync(join(tmpdir(), "sb-real-"));
+		const parent = realTmpDir("sb-real-");
 		const child = join(parent, "child");
 		mkdirSync(child);
 		try {
@@ -135,7 +141,7 @@ describe("existingRealPaths", () => {
 
 describe("buildBwrapArgs", () => {
 	it("unshares pids, mounts a fresh /proc, and tmpfs-overlays the home dir before any bind", () => {
-		const sandbox = mkdtempSync(join(tmpdir(), "sb-args-"));
+		const sandbox = realTmpDir("sb-args-");
 		try {
 			const args = buildBwrapArgs({ sandboxDir: sandbox, readWritePaths: [] });
 			const tmpfsAt = args.indexOf("--tmpfs");
@@ -151,7 +157,7 @@ describe("buildBwrapArgs", () => {
 	});
 
 	it("binds the sandbox dir and extra roots read-write, parents before children, deduped", () => {
-		const parent = mkdtempSync(join(tmpdir(), "sb-binds-"));
+		const parent = realTmpDir("sb-binds-");
 		const child = join(parent, "child");
 		mkdirSync(child);
 		try {
@@ -167,7 +173,7 @@ describe("buildBwrapArgs", () => {
 	});
 
 	it("re-exposes toolchains under $HOME read-only and ends with --chdir to the sandbox dir", () => {
-		const sandbox = mkdtempSync(join(tmpdir(), "sb-chdir-"));
+		const sandbox = realTmpDir("sb-chdir-");
 		try {
 			const args = buildBwrapArgs({ sandboxDir: sandbox, readWritePaths: [] });
 			const rw = args.filter((_, i) => args[i - 1] === "--bind-try");
@@ -197,7 +203,7 @@ describe("outsideHomeRoots", () => {
 
 describe("buildLandlockArgs", () => {
 	it("grants the sandbox dir read-write and toolchains read-only, never all of $HOME", () => {
-		const sandbox = mkdtempSync(join(tmpdir(), "sb-ll-"));
+		const sandbox = realTmpDir("sb-ll-");
 		try {
 			const args = buildLandlockArgs({ sandboxDir: sandbox, readWritePaths: [] });
 			const rw = args.filter((_, i) => args[i - 1] === "--rw");
