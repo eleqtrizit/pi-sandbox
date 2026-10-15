@@ -8,6 +8,7 @@ import {
 	buildBwrapArgs,
 	buildLandlockArgs,
 	buildSeatbeltProfile,
+	metadataPaths,
 	detectOsSandbox,
 	ensureProfileFile,
 	existingRealPaths,
@@ -67,6 +68,36 @@ describe("buildSeatbeltProfile", () => {
 		for (const p of homeReadOnlyPaths()) {
 			expect(profile).toContain(`(allow file-read* (subpath "${p}"))`);
 		}
+	});
+});
+
+describe("metadataPaths", () => {
+	it("returns the home directory itself plus ancestors of allowed roots", () => {
+		const home = "/Users/u";
+		const paths = metadataPaths(["/Users/u/repos/proj"], home);
+		expect(paths).toContain(home);
+		expect(paths).toContain("/Users/u/repos/proj");
+		expect(paths).toContain("/Users/u/repos");
+		expect(paths).not.toContain("/Users/u/repos/proj/sub");
+	});
+
+	it("includes nothing beside home when the root is outside home", () => {
+		const paths = metadataPaths(["/workspace"], "/Users/u");
+		expect(paths).toEqual(["/Users/u"]);
+	});
+});
+
+describe("buildSeatbeltProfile ancestor metadata", () => {
+	it("allows stat of the ancestor chain, keeping content reads denied", () => {
+		const profile = buildSeatbeltProfile({
+			sandboxDir: "/Users/u/repos/proj",
+			readWritePaths: [],
+		});
+		expect(profile).toContain('(allow file-read-metadata (literal "/Users/u"))');
+		expect(profile).toContain('(allow file-read-metadata (literal "/Users/u/repos"))');
+		expect(profile).toContain('(allow file-read-metadata (literal "/Users/u/repos/proj"))');
+		// No data-level read of the ancestors creeps in.
+		expect(profile).not.toContain('(allow file-read* (literal "/Users/u/repos"))');
 	});
 });
 

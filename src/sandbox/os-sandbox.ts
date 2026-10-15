@@ -20,7 +20,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tryRealpath } from "./fs-utils.js";
 
 /** Paths that stay read-write inside every profile. */
@@ -51,6 +51,28 @@ export function homeReadOnlyPaths(): string[] {
 export function homeReadWritePaths(): string[] {
 	const home = homedir();
 	return [join(home, ".cache"), join(home, ".npm")];
+}
+
+/**
+ * Directories that keep file-read-metadata (stat/lstat) permission although
+ * file-read-data stays denied: the home directory itself plus every ancestor
+ * of an allowed root down from it. Tools that resolve paths in userspace by
+ * lstat-ing each component (node's module loader, npm, some shims) fail with
+ * EPERM without this, even for files inside allowed roots. Metadata-only
+ * keeps directory listings unreadable: readdir needs file-read-data.
+ */
+export function metadataPaths(roots: string[], home: string = homedir()): string[] {
+	const out = new Set<string>([home, resolve(home)]);
+	for (const root of roots) {
+		let dir = resolve(root);
+		while (dir.startsWith(`${resolve(home)}/`) && dir !== resolve(home)) {
+			out.add(dir);
+			const parent = dirname(dir);
+			if (parent === dir) break;
+			dir = parent;
+		}
+	}
+	return [...out];
 }
 
 /**
@@ -107,9 +129,17 @@ export function buildSeatbeltProfile({ sandboxDir, readWritePaths }: ProfileInpu
 		"(allow default)",
 		`(deny file-read* file-write* (subpath "${sbplEscape(homedir())}"))`,
 	];
-	for (const p of [resolve(sandboxDir), ...readWritePaths.map((p) => resolve(p)), ...baseReadWritePaths(), ...homeReadWritePaths()]) {
+	const rwRoots = [resolve(sandboxDir), ...readWritePaths.map((p) => resolve(p)), ...baseReadWritePaths(), ...homeReadWritePaths()];
+	for (const p of rwRoots) {
 		lines.push(`(allow file-read* (subpath "${sbplEscape(p)}"))`);
 		lines.push(`(allow file-write* (subpath "${sbplEscape(p)}"))`);
+	}
+	// stat/lstat on the ancestor chain of every allowed root, so programs
+	// that resolve paths component-by-component (node, npm) keep working.
+	// Metadata only: listing those directories still needs file-read-data,
+	// which stays denied.
+	for (const p of metadataPaths(rwRoots)) {
+		lines.push(`(allow file-read-metadata (literal "${sbplEscape(p)}"))`);
 	}
 	// Toolchains under the home directory stay readable (read-only).
 	for (const p of homeReadOnlyPaths()) {
