@@ -1,14 +1,13 @@
 /**
- * Path-checking core for the sandbox: allow lists, sandbox containment checks,
- * and bash-command inspection. Pure decision logic over paths; callers (the
- * tool_call interception in index.ts) turn the returned verdicts into blocks.
+ * Path checks for pi's in-process tools (read, write, edit, grep, find, ls).
+ * Bash is confined at the OS level by os-sandbox.ts; these checks cover the
+ * tools that run inside pi's own process. Pure decision logic over paths.
  */
 
 import { existsSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { HOME, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
-import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, resolveLikeKernel, tryRealpath } from "./fs-utils.js";
-import { refreshAndRecheck } from "./symlinks.js";
+import { HOME, symlinkTargets, unlockedPaths } from "./state.js";
+import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, tryRealpath } from "./fs-utils.js";
 
 /**
  * Paths that are always allowed, regardless of sandbox boundaries. These are
@@ -84,14 +83,11 @@ export function isAllowedPath(resolvedPath: string): boolean {
 			return true;
 		}
 
-		// In symlink mode, allow paths under the real targets of sandbox
-		// symlinks. Targets are already realpath-resolved, so no extra syscall
-		// is needed here. Mode-gated so /lock-sandbox-symlinks re-tightens.
-		if (sandboxState.symlinkMode) {
-			for (const prefix of symlinkTargets) {
-				if (isUnderPrefix(candidate, prefix)) {
-					return true;
-				}
+		// Allow paths under the real targets of sandbox symlinks
+		// (e.g. ./common -> ../common). Targets are realpath-resolved.
+		for (const prefix of symlinkTargets) {
+			if (isUnderPrefix(candidate, prefix)) {
+				return true;
 			}
 		}
 
@@ -102,17 +98,10 @@ export function isAllowedPath(resolvedPath: string): boolean {
 }
 
 /**
- * Check if a resolved path is inside the sandbox directory.
- * By default uses realpath to resolve symlinks before comparing, so paths like
- * /Users/arivera/Dropbox/foo match against a sandbox dir of
- * /Users/arivera/Library/CloudStorage/Dropbox/foo. In symlink mode, compares
- * lexically so symlinks inside the sandbox that resolve outside are allowed.
+ * Check if a resolved path is inside the sandbox directory, resolving
+ * symlinks via realpath before comparing.
  */
 export function isInsideSandbox(resolvedPath: string, sandboxDir: string): boolean {
-	if (sandboxState.symlinkMode) {
-		const rel = relative(resolve(sandboxDir), resolve(resolvedPath));
-		return !rel.startsWith("..");
-	}
 	const realResolved = realpathThroughExisting(resolvedPath);
 	const realSandbox = tryRealpath(resolve(sandboxDir));
 	const rel = relative(realSandbox, realResolved);
@@ -137,16 +126,11 @@ export interface PathCheckResult {
  */
 export function checkPath(path: string, sandboxDir: string): PathCheckResult {
 	const realSandboxDir = tryRealpath(resolve(sandboxDir));
-	const expanded = expandTilde(path);
-	const sandboxRoot = sandboxState.symlinkMode ? resolve(sandboxDir) : realSandboxDir;
-	const resolved = resolve(sandboxRoot, expanded);
+	const resolved = resolve(realSandboxDir, expandTilde(path));
 	if (isAllowedPath(resolved)) {
 		return { allowed: true };
 	}
-	if (!isInsideSandbox(resolved, sandboxRoot)) {
-		if (refreshAndRecheck(resolved, sandboxDir, isAllowedPath)) {
-			return { allowed: true };
-		}
+	if (!isInsideSandbox(resolved, realSandboxDir)) {
 		const displaySandbox = tryRealpath(resolve(sandboxDir));
 		return {
 			allowed: false,
@@ -174,212 +158,3 @@ export function unlockTargetFor(path: string): string {
 	return dirname(path);
 }
 
-/**
- * Split a bash command string into tokens, respecting single and double quotes.
- */
-export function tokenizeCommand(command: string): string[] {
-	const tokens: string[] = [];
-	let current = "";
-	let inSingle = false;
-	let inDouble = false;
-
-	for (let i = 0; i < command.length; i++) {
-		const ch = command[i];
-		const next = command[i + 1] ?? "";
-
-		if (inSingle) {
-			if (ch === "'") {
-				inSingle = false;
-			} else {
-				current += ch;
-			}
-		} else if (inDouble) {
-			if (ch === '"') {
-				inDouble = false;
-			} else if (ch === "\\" && (next === '"' || next === "\\" || next === "$" || next === "`")) {
-				current += next;
-				i++;
-			} else {
-				current += ch;
-			}
-		} else if (ch === "'") {
-			inSingle = true;
-		} else if (ch === '"') {
-			inDouble = true;
-		} else if (ch === " " || ch === "\t") {
-			if (current.length > 0) {
-				tokens.push(current);
-				current = "";
-			}
-		} else {
-			current += ch;
-		}
-	}
-
-	if (current.length > 0) {
-		tokens.push(current);
-	}
-
-	return tokens;
-}
-
-/**
- * Check if a token is a comment marker rather than a filesystem path.
- * Single-line comment: "//" or "///" etc. Multi-line comment start: "/*".
- */
-export function isCommentToken(token: string): boolean {
-	return /^\s*\/\/+/.test(token) || /^\s*\/\*/.test(token);
-}
-
-/** Shell redirect operators that can be glued to a path token (`>`, `2>>`, `<`, `&>`). */
-const REDIRECT_PREFIX = /^(?:\d*|&)?[<>]{1,2}/;
-
-/** True when the token has a `..` path segment, e.g. `../x` or `a/../b`. */
-export function hasParentSegment(token: string): boolean {
-	return token.replace(REDIRECT_PREFIX, "").split("/").includes("..");
-}
-
-/**
- * Check if a token looks like a filesystem path and, if so, whether it exists
- * outside the sandbox.
- *
- * A token is considered "path-like" if it starts with "/" or "~".
- * If it is path-like and the resolved path exists on disk outside the sandbox,
- * it is blocked. Non-existent paths are allowed through (they could be flags,
- * regex patterns, etc. that happen to start with "/" or "~").
- */
-export function checkPathToken(token: string, sandboxDir: string): PathCheckResult {
-	const pathLike = token.startsWith("/") || token.startsWith("~") || hasParentSegment(token);
-	if (!pathLike) {
-		return { allowed: true };
-	}
-
-	// Allow comment markers — they are not filesystem paths
-	if (isCommentToken(token)) {
-		return { allowed: true };
-	}
-
-	const realSandboxDir = tryRealpath(resolve(sandboxDir));
-	const sandboxRoot = sandboxState.symlinkMode ? resolve(sandboxDir) : realSandboxDir;
-	// Redirect operators glue onto the path (`>../x`, `2>>../x`); strip them.
-	const expanded = expandTilde(token.replace(REDIRECT_PREFIX, ""));
-	const lexical = resolve(sandboxRoot, expanded);
-	// A `..` after a symlink leaves through the link target, as the shell does.
-	const resolved = hasParentSegment(expanded) ? resolveLikeKernel(expanded, sandboxRoot) : lexical;
-
-	// A write target need not exist yet, so judge `..` paths by their parent.
-	if (!existsSync(resolved) && !(hasParentSegment(expanded) && existsSync(dirname(resolved)))) {
-		return { allowed: true };
-	}
-
-	if (isAllowedPath(resolved)) {
-		return { allowed: true };
-	}
-
-	if (!isInsideSandbox(resolved, sandboxRoot)) {
-		if (refreshAndRecheck(resolved, sandboxDir, isAllowedPath)) {
-			return { allowed: true };
-		}
-		return {
-			allowed: false,
-			reason: `Sandbox blocked bash command: Command references path "${token}" which resolves to "${resolved}" - outside the sandbox directory "${realSandboxDir}"`,
-			resolved,
-		};
-	}
-
-	return { allowed: true };
-}
-
-/**
- * Remove heredoc bodies from a bash command before path scanning. Agents
- * routinely use `cat >> file <<'EOF' ... EOF` to append file content, and the
- * body routinely contains standalone "/" or path-like text (markdown trees,
- * code samples) that must not be treated as bash path references.
- *
- * A line containing a `<<` heredoc operator (optionally `<<-`, with the
- * delimiter optionally quoted) opens a heredoc; all lines after it are dropped
- * until a line whose trimmed content equals the delimiter. The operator line
- * itself is kept so its redirect target and cd targets are still checked.
- *
- * This is deliberately line-based and only understands the common
- * `cmd <<'DELIM'` / `cmd << DELIM` form (operator at line end or followed by
- * whitespace). Quoted strings on the operator line containing "<<" are not
- * specially handled — a false heredoc open would only skip a few lines of
- * scanning, never produce a false block.
- */
-export function stripHeredocBodies(command: string): string {
-	const kept: string[] = [];
-	let terminator: string | null = null;
-
-	for (const line of command.split("\n")) {
-		if (terminator !== null) {
-			if (line.trim() === terminator) {
-				terminator = null;
-			}
-			continue;
-		}
-		kept.push(line);
-		const match = line.match(/(^|\s)<<-?\s*(['"]?)([A-Za-z0-9_]+)\2(\s|$)/);
-		if (match) {
-			terminator = match[3];
-		}
-	}
-
-	return kept.join("\n");
-}
-
-/**
- * Best-effort bash command sandboxing. Splits on command separators, checks
- * every `cd` target, then checks each token for path-like references that
- * resolve outside the sandbox. Heredoc bodies (see {@link stripHeredocBodies})
- * are stripped first so file content passed via `<<'EOF'` is never scanned.
- */
-export function checkBashCommand(command: string, sandboxDir: string): PathCheckResult & { original?: string } {
-	const trimmed = stripHeredocBodies(command).trim();
-
-	if (!trimmed || trimmed.startsWith("#")) {
-		return { allowed: true };
-	}
-
-	const realSandboxDir = tryRealpath(resolve(sandboxDir));
-	const segments = trimmed.split(/\s*&&\s*|\s*\|\|\s*|\s*;\s*|\s*\|\s*/);
-
-	for (const segment of segments) {
-		const s = segment.trim();
-
-		if (!s || s.startsWith("#") || /^[A-Z_][A-Z0-9_]*=/.test(s)) {
-			continue;
-		}
-
-		const cdMatch = s.match(/\bcd\s+(\S+)/);
-		if (cdMatch) {
-			const target = cdMatch[1];
-			const expanded = expandTilde(target);
-			const sandboxRoot = sandboxState.symlinkMode ? resolve(sandboxDir) : realSandboxDir;
-			const cdResolved = target.startsWith("/") || target.startsWith("~")
-				? resolve(expanded)
-				: resolve(sandboxRoot, target);
-			const cdAllowed =
-				isAllowedPath(cdResolved) || isInsideSandbox(cdResolved, sandboxRoot)
-				|| refreshAndRecheck(cdResolved, sandboxDir, isAllowedPath);
-			if (!cdAllowed) {
-				return {
-					allowed: false,
-					reason: `Sandbox blocked bash command: Command uses "cd ${target}" which resolves to "${cdResolved}" - outside the sandbox directory "${realSandboxDir}"`,
-					resolved: cdResolved,
-					original: `cd ${target}`,
-				};
-			}
-		}
-
-		const tokens = tokenizeCommand(s);
-		for (const token of tokens) {
-			const result = checkPathToken(token, realSandboxDir);
-			if (!result.allowed) {
-				return { ...result, original: token };
-			}
-		}
-	}
-
-	return { allowed: true };
-}

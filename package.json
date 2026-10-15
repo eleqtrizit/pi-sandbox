@@ -1,5 +1,5 @@
 {
-  "name": "hello-world-extension",
+  "name": "pi-sandbox",
   "version": "0.2.0",
   "description": "A template Pi Coding Agent extension (pi 0.84.x / @earendil-works)",
   "repository": {

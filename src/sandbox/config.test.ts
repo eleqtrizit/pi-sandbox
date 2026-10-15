@@ -39,7 +39,6 @@ describe("saveSandboxConfig / loadSandboxConfigFromPath", () => {
 			const cfg = {
 				version: 1,
 				sandboxLocked: false,
-				symlinkMode: true,
 				symlinkTargets: ["/a", "/b"],
 				unlockedPaths: ["/c"],
 				savedAt: "2024-01-01T00:00:00.000Z",
@@ -61,7 +60,6 @@ describe("saveSandboxConfig / loadSandboxConfigFromPath", () => {
 			const path = saveSandboxConfig(cwd, {
 				version: 1,
 				sandboxLocked: true,
-				symlinkMode: false,
 				symlinkTargets: [],
 				unlockedPaths: [],
 			});
@@ -102,14 +100,12 @@ describe("saveSandboxConfig / loadSandboxConfigFromPath", () => {
 			writeFileSync(path, JSON.stringify({
 				version: 1,
 				sandboxLocked: "yes",
-				symlinkMode: 3,
 				symlinkTargets: [1, "/ok"],
 				unlockedPaths: null,
 			}));
 			expect(loadSandboxConfigFromPath(path)).toEqual({
 				version: 1,
 				sandboxLocked: true,
-				symlinkMode: false,
 				symlinkTargets: ["/ok"],
 				unlockedPaths: [],
 				savedAt: undefined,
@@ -125,18 +121,15 @@ describe("applyConfig / currentConfig", () => {
 		applyConfig({
 			version: 1,
 			sandboxLocked: false,
-			symlinkMode: true,
 			symlinkTargets: ["/target"],
 			unlockedPaths: ["/unlocked"],
 		});
 		expect(sandboxState.locked).toBe(false);
-		expect(sandboxState.symlinkMode).toBe(true);
 		expect([...symlinkTargets]).toEqual(["/target"]);
 		expect([...unlockedPaths]).toEqual(["/unlocked"]);
 
 		const snap = currentConfig();
 		expect(snap.sandboxLocked).toBe(false);
-		expect(snap.symlinkMode).toBe(true);
 		expect(snap.symlinkTargets).toEqual(["/target"]);
 		expect(snap.unlockedPaths).toEqual(["/unlocked"]);
 		expect(snap.savedAt).toBeDefined();

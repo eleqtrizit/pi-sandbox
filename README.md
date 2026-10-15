@@ -2,15 +2,15 @@
 
 A security extension for the [pi coding agent](https://github.com/earendil-works/pi-coding-agent). It stops tools from reaching outside the directory where Pi is started, with opt-in escapes for symlinks and individual paths.
 
+Bash commands run inside an OS-level sandbox, so the kernel enforces the rules: paths built at runtime (shell variables, globs, nested shells, interpreters, scripts) are confined exactly like literal paths. All programs stay runnable; only file access is filtered.
+
 ## Quick Start
 
 ```bash
 pi install https://github.com/eleqtrizit/pi-sandbox
 ```
 
-Restart Pi or run `/reload`. The sandbox locks automatically on startup: tools that try to reach outside the project root are blocked and reported in the footer status line. To confirm it is active, run `/sandbox-blocked` after an attempt, or `/save-sandbox-config` to persist your sandbox setup.
-
-The sandbox intercepts the built-in path-based tools (read, write, edit, bash, grep, find, ls) through the `tool_call` event and blocks operations whose paths resolve outside the project root. For bash, it inspects `cd` targets and path-like tokens in each command segment. The guard is best effort: bash cannot be sandboxed perfectly at this level, but common escape routes (absolute paths, `../` traversal, `cd` outside the root) are blocked.
+Restart Pi or run `/reload`. The sandbox locks automatically on startup: commands and tools that reach outside the project root fail with an OS permission error and in-process tools are blocked with a clear reason. To confirm it is active, run `/sandbox-blocked` after an attempt, or `/save-sandbox-config` to persist your sandbox setup.
 
 ## Install
 
@@ -26,19 +26,34 @@ pi -e ./extensions/index.ts
 
 ## How it works
 
-Every path check resolves symlinks before comparing, so symlinked views of the sandbox directory (Dropbox-style `~/Dropbox` paths, macOS `/var/folders`) match the sandbox root correctly. Non-existing paths resolve through the nearest existing ancestor, which keeps paths for files a tool is about to create from being falsely blocked.
+### Bash: OS-level confinement
+
+The extension replaces the built-in bash tool and wraps every command:
+
+- **macOS:** `sandbox-exec` with a generated launchd Seatbelt profile. The profile is `(allow default)` plus a deny on file access under the home directory, re-allowing the sandbox directory, symlink targets, unlocked paths, and the pi config roots. Programs and the network stay unrestricted, so CLIs behave normally; only file access outside the allow list fails.
+- **Linux:** the integration point is `buildBwrapArgs()` in `src/sandbox/os-sandbox.ts`, which builds the bubblewrap argument vector. Until it is implemented, bash calls fail with an explanation; `/unlock-sandbox` disables confinement for the session.
+
+Because the kernel resolves every path at open time, runtime-built paths cannot bypass the rules. A red-team probe with variable paths, globs, `eval`, `sh -c`, process substitution, Python/Node/Perl one-liners, and arena-written scripts was fully confined.
+
+### In-process tools
+
+The `read`, `write`, `edit`, `grep`, `find`, and `ls` tools run inside pi's own process, outside any command sandbox, so they are checked by a realpath containment test: a path resolves through symlinks and then must fall inside the sandbox directory or an allow list. `~/.gitconfig` and the paths below stay readable.
 
 ### Always-allowed paths
 
-These paths are allowed from any sandbox:
+These paths are allowed from any sandbox, in both layers:
 
 - `~/.pi` and `~/.agents`
 - Device and pseudo-filesystem paths: `/dev/null`, `/dev/zero`, `/dev/stdout`, `/dev/stderr`, `/dev/stdin`, `/dev/tty`, `/dev/random`, `/dev/urandom`, `/dev/full`
 - Prefix trees: `/dev/fd`, `/proc/self/fd`, `/tmp`, `/var/folders`
 
+### Symlinks inside the sandbox
+
+Symlinks found inside the sandbox directory (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working.
+
 ### Sandbox config file
 
-The sandbox config file lives at `./.pi/sandbox.json` in the project root, with a fallback to `./.agents/sandbox.json`. It stores lock state, symlink mode, allowlisted symlink targets, and unlocked paths. It is a trust anchor: only the slash commands may write it. Any tool whose input references the file is blocked.
+The sandbox config file lives at `./.pi/` + the config basename in the project root, with a fallback to `./.agents/`. It stores lock state, allowlisted symlink targets, and unlocked paths. It is a trust anchor: only the slash commands may write it. Any tool whose input references the file is blocked.
 
 ## Commands
 
@@ -46,13 +61,11 @@ The sandbox config file lives at `./.pi/sandbox.json` in the project root, with 
 |---------|-------------|
 | `/unlock-sandbox` | Disable all sandbox checks for this session. Sends "The sandbox has been unlocked." to the agent. |
 | `/lock-sandbox` | Re-enable all sandbox checks. |
-| `/unlock-sandbox-symlinks` | Allow symlinks inside the sandbox to resolve outside it. Other checks stay active. Scans the sandbox for symlinks and allowlists their resolved targets. |
-| `/lock-sandbox-symlinks` | Disable symlink mode and re-tighten the sandbox. |
-| `/save-sandbox-config` | Persist the current sandbox state to the config file at `./.pi/sandbox.json` (falls back to `./.agents/sandbox.json`). |
+| `/save-sandbox-config` | Persist the current sandbox state to the config file. |
 | `/unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Blocked files unlock their parent directory. Sends the unlocked directory to the agent. |
 | `/sandbox-blocked` | List the 20 most recently blocked paths with their `/unlock-last-path` index. |
 
-The footer status line always shows the current state: lock state, symlink mode, unlocked path count, and blocked attempt count.
+The footer status line always shows the current state: lock state, symlink target count, unlocked path count, and blocked attempt count.
 
 ## Source layout
 
@@ -62,11 +75,12 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 |--------|----------------|
 | `state.ts` | Mutable sandbox state and the blocked-path history ring buffer |
 | `fs-utils.ts` | Realpath, tilde expansion, and prefix comparison helpers |
-| `symlinks.ts` | Symlink scanning (fd with a manual-walk fallback) and target refresh |
-| `paths.ts` | Allow lists, `checkPath`, `checkPathToken`, `checkBashCommand` |
+| `symlinks.ts` | Symlink scanning (fd with a manual-walk fallback) for allowlisted targets |
+| `os-sandbox.ts` | Seatbelt profile generation, `sandbox-exec` wrapping, and the bubblewrap integration point |
+| `paths.ts` | Allow lists and `checkPath` for the in-process tools |
 | `config.ts` | Config load, save, apply, and snapshot |
 | `display.ts` | Footer status line and startup banner |
-| `index.ts` | Event wiring, `tool_call` interception, and slash commands |
+| `index.ts` | The sandboxed bash tool, `tool_call` interception, and slash commands |
 
 ## Development
 
@@ -75,4 +89,10 @@ npm run typecheck   # tsc --noEmit
 npm test            # vitest
 ```
 
-Unit tests cover the path checks (including macOS `/var/folders` symlink resolution), the bash command tokenizer, symlink scanning, and config persistence.
+Unit tests cover the path checks (including macOS `/var/folders` symlink resolution), profile generation, and config persistence. On macOS with `sandbox-exec` available, the suite also runs a live enforcement test: a file outside the sandbox stays unreadable through literal paths, variable paths, globs, nested shells, and interpreters, while files inside stay readable.
+
+## Notes and limits
+
+- The Seatbelt launcher (`sandbox-exec`) is deprecated by Apple but remains functional and is used by widely deployed tools.
+- The OS layer confines file access only. It does not restrict the network or which programs run, matching the extension's file-containment goal.
+- Interactive shell commands typed with `!` (user_bash) are not wrapped.

@@ -28,15 +28,13 @@ export function ageMs(ts: number): string {
 
 /** One-line sandbox summary for the footer status line. */
 export function statusLine(): string {
-	const targets = sandboxState.symlinkMode ? symlinkTargets.size : 0;
-	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlinks: ${sandboxState.symlinkMode ? `on (${targets})` : "off"} | unlocked: ${unlockedPaths.size} | blocked: ${blockedHistory.length}`;
+	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${unlockedPaths.size} | blocked: ${blockedHistory.length}`;
 }
 
 /**
  * Build the startup banner. Always lists the always-allowed paths so the user
- * can see exactly what the sandbox permits, plus any allowlisted symlink
- * targets when symlink mode is on. The always-allowed lists mirror the ones in
- * paths.ts; keep them in sync.
+ * can see exactly what the sandbox permits, plus allowlisted symlink targets.
+ * The always-allowed lists mirror the ones in paths.ts; keep them in sync.
  */
 export function buildBanner(cwd: string, configPath: string | null, cfg: SandboxConfig | null): string {
 	const lines: string[] = [];
@@ -54,14 +52,12 @@ export function buildBanner(cwd: string, configPath: string | null, cfg: Sandbox
 	}
 	lines.push("     exact: /dev/null  /dev/zero  /dev/stdout  /dev/stderr  /dev/stdin  /dev/tty  /dev/random  /dev/urandom  /dev/full");
 	lines.push("     prefix: /dev/fd  /proc/self/fd  /tmp  /var/folders");
-	if (sandboxState.symlinkMode) {
-		if (symlinkTargets.size === 0) {
-			lines.push("   Symlink targets: (none allowlisted)");
-		} else {
-			lines.push(`   Symlink targets (${symlinkTargets.size}):`);
-			for (const t of symlinkTargets) {
-				lines.push(`     ${displayPath(t)}`);
-			}
+	if (symlinkTargets.size === 0) {
+		lines.push("   Symlink targets: (none)");
+	} else {
+		lines.push(`   Symlink targets (${symlinkTargets.size}):`);
+		for (const t of symlinkTargets) {
+			lines.push(`     ${displayPath(t)}`);
 		}
 	}
 	if (unlockedPaths.size === 0) {

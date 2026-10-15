@@ -47,7 +47,6 @@ describe("recordBlocked", () => {
 describe("resetState", () => {
 	it("restores all mutable state to defaults", () => {
 		sandboxState.locked = false;
-		sandboxState.symlinkMode = true;
 		symlinkTargets.add("/elsewhere");
 		unlockedPaths.add("/unlocked");
 		markSymlinkScan(1234);
@@ -56,7 +55,6 @@ describe("resetState", () => {
 		resetState();
 
 		expect(sandboxState.locked).toBe(true);
-		expect(sandboxState.symlinkMode).toBe(false);
 		expect(symlinkTargets.size).toBe(0);
 		expect(unlockedPaths.size).toBe(0);
 		expect(blockedHistory).toHaveLength(0);

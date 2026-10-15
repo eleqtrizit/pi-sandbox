@@ -8,7 +8,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { markSymlinkScan, sandboxState, symlinkTargets, symlinkTargetsAt } from "./state.js";
+import { markSymlinkScan, symlinkTargets } from "./state.js";
 import { tryRealpath } from "./fs-utils.js";
 
 /**
@@ -26,9 +26,6 @@ const SYMLINK_SKIP_DIRS: ReadonlySet<string> = new Set([
 	".next",
 	"target",
 ]);
-
-/** Minimum time between automatic symlink-target rescans (throttle). */
-export const SYMLINK_REFRESH_MIN_MS = 1000;
 
 /**
  * Resolve which fd binary to use for the symlink scan. On some platforms the
@@ -164,19 +161,3 @@ export function rescanSymlinkTargets(sandboxDir: string): number {
 	return symlinkTargets.size;
 }
 
-/**
- * Re-scan symlink targets if the throttle window has elapsed, then re-test
- * `resolved` against the allow list. Used at block points to pick up symlinks
- * created mid-session without polling. Only active in symlink mode. The
- * `isAllowed` callback re-runs the caller's allow check after a refresh.
- */
-export function refreshAndRecheck(resolved: string, sandboxDir: string, isAllowed: (p: string) => boolean): boolean {
-	if (!sandboxState.symlinkMode) {
-		return false;
-	}
-	const now = Date.now();
-	if (symlinkTargetsAt === 0 || now - symlinkTargetsAt >= SYMLINK_REFRESH_MIN_MS) {
-		rescanSymlinkTargets(sandboxDir);
-	}
-	return isAllowed(resolved);
-}

@@ -13,19 +13,16 @@ import { homedir } from "node:os";
 /** Home directory, resolved once at module load. */
 export const HOME = homedir();
 
-/** Master toggle: when false, all path checks are skipped. */
+/** Master toggle: when false, all sandbox checks are skipped. */
 export const sandboxState = {
 	locked: true,
-	/** Opt-in symlink mode: compare lexically instead of resolving symlinks. */
-	symlinkMode: false,
 };
 
 /**
- * Real filesystem paths reachable via symlinks inside the sandbox. Populated
- * when symlink mode is enabled and refreshed on block. Entries are already
- * realpath-resolved, so lookups need no extra syscalls. Mode-gated: only
- * consulted while `sandboxState.symlinkMode` is true, so locking symlinks back
- * instantly re-tightens the sandbox.
+ * Real filesystem paths reachable via symlinks inside the sandbox, such as
+ * ./common -> ../common. Entries are already realpath-resolved, so lookups
+ * need no extra syscalls. Used by the in-process tool checks and by the OS
+ * profile builder.
  */
 export const symlinkTargets: Set<string> = new Set();
 
@@ -90,7 +87,6 @@ export function recordBlocked(original: string, resolved: string, tool: string, 
  */
 export function resetState(): void {
 	sandboxState.locked = true;
-	sandboxState.symlinkMode = false;
 	symlinkTargets.clear();
 	markSymlinkScan(0);
 	blockedHistory.length = 0;

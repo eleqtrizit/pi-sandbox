@@ -1,7 +1,7 @@
 /**
- * Sandbox config persistence. The config file stores lock state, symlink mode,
- * allowlisted symlink targets, and explicitly unlocked paths so a session can
- * restore its sandbox setup. The file is a trust anchor: only slash commands
+ * Sandbox config persistence. The config file stores lock state, allowlisted
+ * symlink targets, and explicitly unlocked paths so a session can restore its
+ * sandbox setup. The file is a trust anchor: only slash commands
  * may write it, through the in-process saveSandboxConfig helper.
  */
 
@@ -13,7 +13,6 @@ import { markSymlinkScan, sandboxState, symlinkTargets, unlockedPaths } from "./
 export interface SandboxConfig {
 	version: number;
 	sandboxLocked: boolean;
-	symlinkMode: boolean;
 	symlinkTargets: string[];
 	unlockedPaths: string[];
 	savedAt?: string;
@@ -52,7 +51,6 @@ export function loadSandboxConfigFromPath(path: string): SandboxConfig | null {
 		return {
 			version: parsed.version,
 			sandboxLocked: typeof parsed.sandboxLocked === "boolean" ? parsed.sandboxLocked : true,
-			symlinkMode: typeof parsed.symlinkMode === "boolean" ? parsed.symlinkMode : false,
 			symlinkTargets: Array.isArray(parsed.symlinkTargets)
 				? parsed.symlinkTargets.filter((t): t is string => typeof t === "string")
 				: [],
@@ -85,13 +83,11 @@ export function saveSandboxConfig(cwd: string, cfg: SandboxConfig): string {
 }
 
 /**
- * Apply a loaded config to the live sandbox state. Symlink targets are taken
- * verbatim (they were realpath-resolved at save time); a later refresh-on-block
- * re-scans to pick up filesystem changes.
+ * Apply a loaded config to the live sandbox state. Symlink targets are
+ * realpath-resolved at save time and taken verbatim here.
  */
 export function applyConfig(cfg: SandboxConfig): void {
 	sandboxState.locked = cfg.sandboxLocked;
-	sandboxState.symlinkMode = cfg.symlinkMode;
 	symlinkTargets.clear();
 	for (const t of cfg.symlinkTargets) {
 		symlinkTargets.add(t);
@@ -108,7 +104,6 @@ export function currentConfig(): SandboxConfig {
 	return {
 		version: 1,
 		sandboxLocked: sandboxState.locked,
-		symlinkMode: sandboxState.symlinkMode,
 		symlinkTargets: [...symlinkTargets],
 		unlockedPaths: [...unlockedPaths],
 		savedAt: new Date().toISOString(),

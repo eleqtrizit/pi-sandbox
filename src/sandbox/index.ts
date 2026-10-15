@@ -1,14 +1,16 @@
 /**
- * Sandbox extension wiring: session hooks, tool_call interception, and the
- * slash commands. Pure path logic lives in paths.ts / symlinks.ts; this module
- * only translates events and user commands into sandbox decisions.
+ * Sandbox extension wiring: session hooks, the OS-sandboxed bash tool,
+ * in-process tool_call interception for path-based tools, and the slash
+ * commands. Kernel confinement lives in os-sandbox.ts; path decisions for
+ * pi's own tools live in paths.ts.
  */
 
-import { type ExtensionAPI, type ExtensionContext, isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { blockedHistory, recordBlocked, sandboxState, unlockedPaths } from "./state.js";
+import { type ExtensionAPI, type ExtensionContext, createBashTool, isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { blockedHistory, recordBlocked, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 import { isUnderRealPrefix, tryRealpath } from "./fs-utils.js";
-import { checkBashCommand, checkPath, unlockTargetFor } from "./paths.js";
-import { rescanSymlinkTargets } from "./symlinks.js";
+import { checkPath, unlockTargetFor } from "./paths.js";
+import { collectSymlinkTargets } from "./symlinks.js";
+import { detectOsSandbox, type ProfileInput } from "./os-sandbox.js";
 import {
 	CONFIG_BASENAME,
 	applyConfig,
@@ -37,9 +39,47 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		}
 	}
 
+	/** Assemble the profile inputs for a sandboxed command run. */
+	function profileInputFor(cwd: string): ProfileInput {
+		return {
+			sandboxDir: cwd,
+			readWritePaths: [...symlinkTargets, ...unlockedPaths],
+		};
+	}
+
+	const osSandbox = detectOsSandbox();
+
+	// Override the built-in bash tool so every command runs inside the OS
+	// sandbox. Programs stay runnable; only file access is filtered.
+	const bashTool = createBashTool(process.cwd(), {
+		spawnHook: ({ command, cwd, env }) => {
+			if (!sandboxState.locked) {
+				return { command, cwd, env };
+			}
+			if (!osSandbox || !osSandbox.available) {
+				const what = osSandbox?.kind === "bubblewrap" ? "bubblewrap (bwrap)" : "the OS sandbox";
+				throw new Error(
+					`Sandbox blocked: ${what} is not available on this platform. ` +
+					"Install it, or disable confinement with /unlock-sandbox.",
+				);
+			}
+			for (const target of collectSymlinkTargets(cwd)) {
+				symlinkTargets.add(target);
+			}
+			return { command: osSandbox.wrap(command, profileInputFor(cwd)), cwd, env };
+		},
+	});
+	pi.registerTool({
+		...bashTool,
+		execute: (id, params, signal, onUpdate, _ctx) => bashTool.execute(id, params, signal, onUpdate),
+	});
+
 	// Autoload the saved sandbox config on session start, then announce settings.
 	pi.on("session_start", async (event, ctx) => {
 		const { configPath, cfg } = restoreOnSessionStart(ctx);
+		for (const target of collectSymlinkTargets(ctx.cwd)) {
+			symlinkTargets.add(target);
+		}
 		refreshStatus(ctx);
 		if (event.reason === "startup" && ctx.hasUI) {
 			ctx.ui.notify(buildBanner(ctx.cwd, configPath, cfg), "info");
@@ -66,43 +106,18 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		description: "Re-enable sandbox restrictions for this session",
 		handler: async (_args, ctx) => {
 			sandboxState.locked = true;
-			ctx.ui.notify("🔒 Sandbox locked — paths outside sandbox directory are blocked", "info");
-			refreshStatus(ctx);
-		},
-	});
-
-	// /unlock-sandbox-symlinks - allows symlinks inside the sandbox to resolve outside it
-	pi.registerCommand("unlock-sandbox-symlinks", {
-		description: "Allow symlinks inside the sandbox to resolve outside it (keeps all other checks active)",
-		handler: async (_args, ctx) => {
-			sandboxState.symlinkMode = true;
-			const count = rescanSymlinkTargets(ctx.cwd);
-			ctx.ui.notify(
-				`🔓 Sandbox symlink mode enabled: ${count} symlink target${count === 1 ? "" : "s"} allowlisted`,
-				"info",
-			);
-			refreshStatus(ctx);
-		},
-	});
-
-	// /lock-sandbox-symlinks - disables symlink mode
-	pi.registerCommand("lock-sandbox-symlinks", {
-		description: "Disable symlink mode (re-enable realpath checks)",
-		handler: async (_args, ctx) => {
-			sandboxState.symlinkMode = false;
-			rescanSymlinkTargets(ctx.cwd);
-			ctx.ui.notify("🔒 Sandbox symlink mode disabled: symlinks resolving outside the sandbox are blocked", "info");
+			ctx.ui.notify("🔒 Sandbox locked — paths outside the sandbox are blocked", "info");
 			refreshStatus(ctx);
 		},
 	});
 
 	// /save-sandbox-config - persist current sandbox state to disk
 	pi.registerCommand("save-sandbox-config", {
-		description: "Save current sandbox state (lock, symlink mode, allowlisted targets) to the sandbox config file",
+		description: "Save current sandbox state (lock state, allowlisted symlink targets, unlocked paths) to the sandbox config file",
 		handler: async (_args, ctx) => {
 			// Re-scan symlink targets first so the saved snapshot is current.
-			if (sandboxState.symlinkMode) {
-				rescanSymlinkTargets(ctx.cwd);
+			for (const target of collectSymlinkTargets(ctx.cwd)) {
+				symlinkTargets.add(target);
 			}
 			try {
 				const path = saveSandboxConfig(ctx.cwd, currentConfig());
@@ -138,6 +153,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			// the parent directory so the whole subtree becomes reachable.
 			const target = unlockTargetFor(entry.path);
 			unlockedPaths.add(target);
+			symlinkTargets.add(target);
 			const unlockedLine = target === entry.path
 				? `🔓 Unlocked: ${displayPath(entry.path)}`
 				: `🔓 Unlocked: ${displayPath(target)} (parent directory of ${displayPath(entry.path)})`;
@@ -195,6 +211,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			return { block: true, reason };
 		}
 
+		// The bash tool runs under the OS sandbox via its spawnHook; no text
+		// check applies here. These are pi's in-process path tools.
 		if (isToolCallEventType("read", event) || isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
 			const path = event.input.path as string;
 			const result = checkPath(path, ctx.cwd);
@@ -203,20 +221,6 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				recordBlocked(path, result.resolved ?? path, event.toolName, tryRealpath);
 				if (ctx.hasUI) {
 					ctx.ui.notify(`Sandbox blocked: ${event.toolName} to "${path}"`, "warning");
-				}
-				return { block: true, reason: result.reason };
-			}
-			return undefined;
-		}
-
-		if (isToolCallEventType("bash", event)) {
-			const command = event.input.command as string;
-			const result = checkBashCommand(command, ctx.cwd);
-
-			if (!result.allowed) {
-				recordBlocked(result.original ?? command, result.resolved ?? "", event.toolName, tryRealpath);
-				if (ctx.hasUI) {
-					ctx.ui.notify(`Sandbox blocked bash command: ${result.reason}`, "warning");
 				}
 				return { block: true, reason: result.reason };
 			}
