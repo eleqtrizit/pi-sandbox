@@ -64,7 +64,7 @@ The sandbox config file lives at `./.pi/` + the config basename in the project r
 | `/unlock-sandbox` | Disable all sandbox checks for this session. Sends "The sandbox has been unlocked." to the agent. |
 | `/lock-sandbox` | Re-enable all sandbox checks. |
 | `/save-sandbox-config` | Persist the current sandbox state to the config file. |
-| `/unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Blocked files unlock their parent directory. Sends the unlocked directory to the agent. |
+| `/unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Blocked files unlock their parent directory. Bash denials are read back from the command's error output (lines such as "Operation not permitted" that name a path under `$HOME`). Sends the unlocked directory to the agent. |
 | `/sandbox-blocked` | List the 20 most recently blocked paths with their `/unlock-last-path` index. |
 
 The footer status line always shows the current state: lock state, symlink target count, unlocked path count, and blocked attempt count.

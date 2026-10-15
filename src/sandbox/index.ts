@@ -10,6 +10,7 @@ import { blockedHistory, recordBlocked, sandboxState, symlinkTargets, unlockedPa
 import { isUnderRealPrefix, tryRealpath } from "./fs-utils.js";
 import { checkPath, unlockTargetFor } from "./paths.js";
 import { collectSymlinkTargets } from "./symlinks.js";
+import { extractDeniedHomePaths } from "./denials.js";
 import { detectOsSandbox, type ProfileInput } from "./os-sandbox.js";
 import {
 	CONFIG_BASENAME,
@@ -141,7 +142,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				return;
 			}
 			if (blockedHistory.length === 0) {
-				ctx.ui.notify("No blocked paths recorded yet. The sandbox records a path each time it blocks a tool.", "warning");
+				ctx.ui.notify("No blocked paths recorded yet. The sandbox records a path when a path tool is blocked or when bash output shows a denied path under your home directory.", "warning");
 				return;
 			}
 			const idx = blockedHistory.length - n;
@@ -193,6 +194,19 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			lines.push("Use /unlock-last-path [n] to allow a path (default n=1, the newest).");
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
+	});
+
+	// The kernel denies bash file access without telling pi, so read the denied
+	// paths back out of the command's error output for /unlock-last-path.
+	pi.on("tool_result", async (event) => {
+		if (!sandboxState.locked || event.toolName !== "bash") {
+			return undefined;
+		}
+		const text = event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+		for (const path of extractDeniedHomePaths(text)) {
+			recordBlocked(path, path, "bash", tryRealpath);
+		}
+		return undefined;
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
