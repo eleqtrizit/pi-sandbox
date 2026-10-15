@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { HOME, globalUnlockedPaths, markSymlinkScan, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 
-/** Serialized sandbox state written by /save-sandbox-config. */
+/** Serialized sandbox state written by /sandbox-save-config. */
 export interface SandboxConfig {
 	version: number;
 	sandboxLocked: boolean;

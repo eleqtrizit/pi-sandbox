@@ -56,7 +56,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	// Override the built-in bash tool so every command runs inside the OS
 	// sandbox. Programs stay runnable; only file access is filtered.
 	// Symlink targets are allowlisted once at session start (and by
-	// /save-sandbox-config). Re-scanning here would let an agent allowlist
+	// /sandbox-save-config). Re-scanning here would let an agent allowlist
 	// any path it can name by creating a symlink to it in its own arena.
 	const bashTool = createBashTool(process.cwd(), {
 		spawnHook: ({ command, cwd, env }) => {
@@ -68,7 +68,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				const why = osSandbox?.unavailableReason ? `: ${osSandbox.unavailableReason}` : "";
 				throw new Error(
 					`Sandbox blocked: ${what} is not available on this platform${why}. ` +
-					"Install it, or disable confinement with /unlock-sandbox.",
+					"Install it, or disable confinement with /sandbox-unlock.",
 				);
 			}
 			return { command: osSandbox.wrap(command, profileInputFor(cwd)), cwd, env };
@@ -96,8 +96,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		}
 	});
 
-	// /unlock-sandbox - disables all sandbox checks
-	pi.registerCommand("unlock-sandbox", {
+	// /sandbox-unlock - disables all sandbox checks
+	pi.registerCommand("sandbox-unlock", {
 		description: "Disable sandbox restrictions for this session",
 		handler: async (_args, ctx) => {
 			sandboxState.locked = false;
@@ -111,8 +111,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		},
 	});
 
-	// /lock-sandbox - re-enables all sandbox checks
-	pi.registerCommand("lock-sandbox", {
+	// /sandbox-lock - re-enables all sandbox checks
+	pi.registerCommand("sandbox-lock", {
 		description: "Re-enable sandbox restrictions for this session",
 		handler: async (_args, ctx) => {
 			sandboxState.locked = true;
@@ -121,8 +121,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		},
 	});
 
-	// /save-sandbox-config - persist current sandbox state to disk
-	pi.registerCommand("save-sandbox-config", {
+	// /sandbox-save-config - persist current sandbox state to disk
+	pi.registerCommand("sandbox-save-config", {
 		description: "Save current sandbox state (lock state, allowlisted symlink targets, unlocked paths) to the sandbox config file",
 		handler: async (_args, ctx) => {
 			// Re-scan symlink targets first so the saved snapshot is current.
@@ -142,10 +142,10 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	/**
 	 * Unlock the nth most recently blocked path. With `global` set, the path is
 	 * saved to the global config at once and reloaded; otherwise it is kept for
-	 * this session until /save-sandbox-config.
+	 * this session until /sandbox-save-config.
 	 */
 	function unlockBlockedPath(args: string, ctx: ExtensionContext, global: boolean): void {
-		const command = global ? "/unlock-last-path-globally" : "/unlock-last-path";
+		const command = global ? "/sandbox-unlock-last-path-globally" : "/sandbox-unlock-last-path";
 		const arg = args.trim();
 		const n = arg.length > 0 ? parseInt(arg, 10) : 1;
 		if (!Number.isInteger(n) || n < 1) {
@@ -182,7 +182,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			: `🔓 Unlocked${global ? " globally" : ""}: ${displayPath(target)} (parent directory of ${displayPath(entry.path)})`;
 		const persistLine = global
 			? `   Saved to ${displayPath(globalConfigPath())}; applies to every project.`
-			: "   Run /save-sandbox-config to persist across sessions.";
+			: "   Run /sandbox-save-config to persist across sessions.";
 		ctx.ui.notify(
 			`${unlockedLine}\n` +
 			`   blocked by ${entry.tool} (${ageMs(entry.timestamp)} ago), source: "${entry.original}"\n` +
@@ -199,21 +199,21 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		refreshStatus(ctx);
 	}
 
-	// /unlock-last-path - unlock the directory of the most recently blocked path (or nth-to-last)
-	pi.registerCommand("unlock-last-path", {
-		description: "Unlock the directory of the most recently blocked sandbox path, or the nth-to-last when given a number (e.g. /unlock-last-path 2). Blocked files unlock their parent directory",
+	// /sandbox-unlock-last-path - unlock the directory of the most recently blocked path (or nth-to-last)
+	pi.registerCommand("sandbox-unlock-last-path", {
+		description: "Unlock the directory of the most recently blocked sandbox path, or the nth-to-last when given a number (e.g. /sandbox-unlock-last-path 2). Blocked files unlock their parent directory",
 		handler: async (args, ctx) => unlockBlockedPath(args, ctx, false),
 	});
 
-	// /unlock-last-path-globally - same, but saved to the global config for every project
-	pi.registerCommand("unlock-last-path-globally", {
-		description: "Like /unlock-last-path, but saves the unlocked directory to the global sandbox config in ~/.pi/agent so it applies to every project",
+	// /sandbox-unlock-last-path-globally - same, but saved to the global config for every project
+	pi.registerCommand("sandbox-unlock-last-path-globally", {
+		description: "Like /sandbox-unlock-last-path, but saves the unlocked directory to the global sandbox config in ~/.pi/agent so it applies to every project",
 		handler: async (args, ctx) => unlockBlockedPath(args, ctx, true),
 	});
 
 	// /sandbox-blocked - list recently blocked paths
 	pi.registerCommand("sandbox-blocked", {
-		description: "List recently blocked sandbox paths (newest last) with their /unlock-last-path index",
+		description: "List recently blocked sandbox paths (newest last) with their /sandbox-unlock-last-path index",
 		handler: async (_args, ctx) => {
 			if (blockedHistory.length === 0) {
 				ctx.ui.notify("No blocked paths recorded yet.", "info");
@@ -226,13 +226,13 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				const tag = [...unlockedPaths].some((p) => isUnderRealPrefix(e.path, p)) ? " [unlocked]" : "";
 				lines.push(`  [${pos}] ${displayPath(e.path)}  (${e.tool}, ${ageMs(e.timestamp)} ago, src: "${e.original}")${tag}`);
 			}
-			lines.push("Use /unlock-last-path [n] to allow a path (default n=1, the newest).");
+			lines.push("Use /sandbox-unlock-last-path [n] to allow a path (default n=1, the newest).");
 			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 
 	// The kernel denies bash file access without telling pi, so read the denied
-	// paths back out of the command's error output for /unlock-last-path.
+	// paths back out of the command's error output for /sandbox-unlock-last-path.
 	pi.on("tool_result", async (event) => {
 		if (!sandboxState.locked || event.toolName !== "bash") {
 			return undefined;

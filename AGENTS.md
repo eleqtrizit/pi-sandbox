@@ -24,7 +24,7 @@ Two enforcement layers; keep both in mind before changing anything.
 Invariants:
 
 - **Never re-allowlist symlink targets on a per-command basis.** Targets are
-  scanned at `session_start` and by `/save-sandbox-config` only. Re-scanning
+  scanned at `session_start` and by `/sandbox-save-config` only. Re-scanning
   let an agent allowlist any path it can name by creating `ln -s <path> l` in
   its own workspace (fixed in 159e4df after a probe demonstrated it).
 - **Bash fails closed** when the platform sandbox is unavailable. On Linux that

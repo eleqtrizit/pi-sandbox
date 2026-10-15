@@ -34,7 +34,7 @@ export function markSymlinkScan(now: number): void {
 	symlinkTargetsAt = now;
 }
 
-/** One recorded sandbox block, kept for the /unlock-last-path workflow. */
+/** One recorded sandbox block, kept for the /sandbox-unlock-last-path workflow. */
 export interface BlockedEntry {
 	/** Realpath-resolved path that was denied. */
 	path: string;
@@ -51,22 +51,22 @@ export const BLOCKED_HISTORY_MAX = 50;
 
 /**
  * Ring buffer of recent blocked paths, newest last. Each path is kept at most
- * once: a repeat block moves the existing entry to the end so /unlock-last-path
+ * once: a repeat block moves the existing entry to the end so /sandbox-unlock-last-path
  * always surfaces the most recently denied unique path.
  */
 export const blockedHistory: BlockedEntry[] = [];
 
 /**
- * Paths explicitly unlocked by the user via /unlock-last-path. Treated as
+ * Paths explicitly unlocked by the user via /sandbox-unlock-last-path. Treated as
  * prefix-allowed (like PREFIX_ALLOWED_PATHS) in isAllowedPath, and persisted
- * alongside the rest of the sandbox state by /save-sandbox-config.
+ * alongside the rest of the sandbox state by /sandbox-save-config.
  */
 export const unlockedPaths: Set<string> = new Set();
 
 /**
- * Paths unlocked for every project by /unlock-last-path-globally. Loaded from
+ * Paths unlocked for every project by /sandbox-unlock-last-path-globally. Loaded from
  * the global config file and kept apart from `unlockedPaths` so that
- * /save-sandbox-config never copies them into a project config.
+ * /sandbox-save-config never copies them into a project config.
  */
 export const globalUnlockedPaths: Set<string> = new Set();
 
@@ -76,7 +76,7 @@ export function allUnlockedPaths(): string[] {
 }
 
 /**
- * Record a blocked path attempt for the /unlock-last-path workflow. The
+ * Record a blocked path attempt for the /sandbox-unlock-last-path workflow. The
  * resolved path is realpath'd so the stored form matches the realpath'd
  * candidates that isAllowedPath checks. Each path is kept at most once: a
  * repeat block moves the existing entry to the end (most recent).

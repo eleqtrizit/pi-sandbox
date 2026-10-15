@@ -149,7 +149,7 @@ export function collectSymlinkTargets(sandboxDir: string): string[] {
 
 /**
  * Replace the allowlisted symlink targets with a fresh scan of `sandboxDir`.
- * Used by /unlock-sandbox-symlinks and /save-sandbox-config.
+ * Used by /sandbox-unlock-symlinks and /sandbox-save-config.
  */
 export function rescanSymlinkTargets(sandboxDir: string): number {
 	const targets = collectSymlinkTargets(sandboxDir);

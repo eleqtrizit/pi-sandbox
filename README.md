@@ -10,7 +10,7 @@ Bash commands run inside an OS-level sandbox, so the kernel enforces the rules: 
 pi install https://github.com/eleqtrizit/pi-sandbox
 ```
 
-Restart Pi or run `/reload`. The sandbox locks automatically on startup: commands and tools that reach outside the project root fail with an OS permission error and in-process tools are blocked with a clear reason. To confirm it is active, run `/sandbox-blocked` after an attempt, or `/save-sandbox-config` to persist your sandbox setup.
+Restart Pi or run `/reload`. The sandbox locks automatically on startup: commands and tools that reach outside the project root fail with an OS permission error and in-process tools are blocked with a clear reason. To confirm it is active, run `/sandbox-blocked` after an attempt, or `/sandbox-save-config` to persist your sandbox setup.
 
 ## Install
 
@@ -31,7 +31,7 @@ pi -e ./extensions/index.ts
 The extension replaces the built-in bash tool and wraps every command:
 
 - **macOS:** `sandbox-exec` with a generated launchd Seatbelt profile. The profile is `(allow default)` plus a deny on file access under the home directory, re-allowing the sandbox directory, symlink targets, unlocked paths, and the pi config roots. Programs and the network stay unrestricted, so CLIs behave normally; only file access outside the allow list fails.
-- **Linux:** bubblewrap (`/usr/bin/bwrap`) with the argument vector built by `buildBwrapArgs()` in `src/sandbox/os-sandbox.ts`. The host root stays bind-mounted read-write, a tmpfs covers `$HOME` so the real home is invisible, and the allowed roots are bound back in. PIDs are unshared with a fresh `/proc`, which blocks the `/proc/<pid>/root` route into the real home. Availability is decided by `probeBwrap()`, which runs a real bwrap command once instead of checking that the binary exists — Ubuntu 24.04+ AppArmor can restrict unprivileged user namespaces. When the probe fails, the extension falls back to Landlock through `src/sandbox/landlock.py` (needs `/usr/bin/python3` and a kernel with Landlock, 5.13+). Landlock needs no user namespaces, so AppArmor does not block it; it allows every path outside `$HOME` plus the same allowed roots, and blocked paths report "permission denied". Only when both fail do bash calls block with both reasons; `/unlock-sandbox` disables confinement for the session. A blocked path surfaces as "not found" rather than "permission denied", so test assertions should check for failure, not a specific error.
+- **Linux:** bubblewrap (`/usr/bin/bwrap`) with the argument vector built by `buildBwrapArgs()` in `src/sandbox/os-sandbox.ts`. The host root stays bind-mounted read-write, a tmpfs covers `$HOME` so the real home is invisible, and the allowed roots are bound back in. PIDs are unshared with a fresh `/proc`, which blocks the `/proc/<pid>/root` route into the real home. Availability is decided by `probeBwrap()`, which runs a real bwrap command once instead of checking that the binary exists — Ubuntu 24.04+ AppArmor can restrict unprivileged user namespaces. When the probe fails, the extension falls back to Landlock through `src/sandbox/landlock.py` (needs `/usr/bin/python3` and a kernel with Landlock, 5.13+). Landlock needs no user namespaces, so AppArmor does not block it; it allows every path outside `$HOME` plus the same allowed roots, and blocked paths report "permission denied". Only when both fail do bash calls block with both reasons; `/sandbox-unlock` disables confinement for the session. A blocked path surfaces as "not found" rather than "permission denied", so test assertions should check for failure, not a specific error.
 
 Because the kernel resolves every path at open time, runtime-built paths cannot bypass the rules. A red-team probe with variable paths, globs, `eval`, `sh -c`, process substitution, Python/Node/Perl one-liners, and arena-written scripts was fully confined.
 
@@ -51,24 +51,24 @@ These paths are allowed from any sandbox, in both layers:
 
 ### Symlinks inside the sandbox
 
-Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: re-scanning on every command would let an agent allowlist any path it can name by creating a link to it. Run `/save-sandbox-config` to rescan deliberately.
+Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: re-scanning on every command would let an agent allowlist any path it can name by creating a link to it. Run `/sandbox-save-config` to rescan deliberately.
 
 ### Sandbox config file
 
 The sandbox config file lives at `./.pi/` + the config basename in the project root, with a fallback to `./.agents/`. It stores lock state, allowlisted symlink targets, and unlocked paths. It is a trust anchor: only the slash commands may write it. Any tool whose input references the file is blocked.
 
-A global config with the same basename lives in `~/.pi/agent/`. It stores only `unlockedPaths`, written by `/unlock-last-path-globally`. At session start its paths are merged with the project config, and a project snapshot (`/save-sandbox-config`) never copies them. An unreadable global file is reported and never overwritten.
+A global config with the same basename lives in `~/.pi/agent/`. It stores only `unlockedPaths`, written by `/sandbox-unlock-last-path-globally`. At session start its paths are merged with the project config, and a project snapshot (`/sandbox-save-config`) never copies them. An unreadable global file is reported and never overwritten.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/unlock-sandbox` | Disable all sandbox checks for this session. Sends "The sandbox has been unlocked." to the agent. |
-| `/lock-sandbox` | Re-enable all sandbox checks. |
-| `/save-sandbox-config` | Persist the current sandbox state to the config file. |
-| `/unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Blocked files unlock their parent directory. Bash denials are read back from the command's error output (lines such as "Operation not permitted" that name a path under `$HOME`). Sends the unlocked directory to the agent. |
-| `/unlock-last-path-globally` | Like `/unlock-last-path`, but saves the directory to the global config in `~/.pi/agent/` at once, reloads it, and applies it to every project. |
-| `/sandbox-blocked` | List the 20 most recently blocked paths with their `/unlock-last-path` index. |
+| `/sandbox-unlock` | Disable all sandbox checks for this session. Sends "The sandbox has been unlocked." to the agent. |
+| `/sandbox-lock` | Re-enable all sandbox checks. |
+| `/sandbox-save-config` | Persist the current sandbox state to the config file. |
+| `/sandbox-unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/sandbox-unlock-last-path 2`). Blocked files unlock their parent directory. Bash denials are read back from the command's error output (lines such as "Operation not permitted" that name a path under `$HOME`). Sends the unlocked directory to the agent. |
+| `/sandbox-unlock-last-path-globally` | Like `/sandbox-unlock-last-path`, but saves the directory to the global config in `~/.pi/agent/` at once, reloads it, and applies it to every project. |
+| `/sandbox-blocked` | List the 20 most recently blocked paths with their `/sandbox-unlock-last-path` index. |
 
 The footer status line always shows the current state: lock state, symlink target count, unlocked path count, and blocked attempt count.
 
