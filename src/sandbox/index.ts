@@ -6,7 +6,7 @@
  */
 
 import { type ExtensionAPI, type ExtensionContext, createBashTool, isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { blockedHistory, recordBlocked, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
+import { allUnlockedPaths, blockedHistory, recordBlocked, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 import { isUnderRealPrefix, tryRealpath } from "./fs-utils.js";
 import { checkPath, unlockTargetFor } from "./paths.js";
 import { collectSymlinkTargets } from "./symlinks.js";
@@ -14,10 +14,13 @@ import { extractDeniedHomePaths } from "./denials.js";
 import { detectOsSandbox, type ProfileInput } from "./os-sandbox.js";
 import {
 	CONFIG_BASENAME,
+	addGlobalUnlockedPath,
 	applyConfig,
 	currentConfig,
 	existingConfigPath,
 	loadSandboxConfigFromPath,
+	globalConfigPath,
+	reloadGlobalConfig,
 	saveSandboxConfig,
 } from "./config.js";
 import { ageMs, buildBanner, displayPath, statusLine } from "./display.js";
@@ -44,7 +47,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	function profileInputFor(cwd: string): ProfileInput {
 		return {
 			sandboxDir: cwd,
-			readWritePaths: [...symlinkTargets, ...unlockedPaths],
+			readWritePaths: [...symlinkTargets, ...allUnlockedPaths()],
 		};
 	}
 
@@ -79,6 +82,11 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	// Autoload the saved sandbox config on session start, then announce settings.
 	pi.on("session_start", async (event, ctx) => {
 		const { configPath, cfg } = restoreOnSessionStart(ctx);
+		try {
+			reloadGlobalConfig();
+		} catch (err) {
+			ctx.ui.notify(err instanceof Error ? err.message : String(err), "warning");
+		}
 		for (const target of collectSymlinkTargets(ctx.cwd)) {
 			symlinkTargets.add(target);
 		}
@@ -131,49 +139,76 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		},
 	});
 
+	/**
+	 * Unlock the nth most recently blocked path. With `global` set, the path is
+	 * saved to the global config at once and reloaded; otherwise it is kept for
+	 * this session until /save-sandbox-config.
+	 */
+	function unlockBlockedPath(args: string, ctx: ExtensionContext, global: boolean): void {
+		const command = global ? "/unlock-last-path-globally" : "/unlock-last-path";
+		const arg = args.trim();
+		const n = arg.length > 0 ? parseInt(arg, 10) : 1;
+		if (!Number.isInteger(n) || n < 1) {
+			ctx.ui.notify(`Invalid argument "${arg}": expected a positive integer (1 = last blocked, 2 = second-to-last, ...)`, "error");
+			return;
+		}
+		if (blockedHistory.length === 0) {
+			ctx.ui.notify("No blocked paths recorded yet. The sandbox records a path when a path tool is blocked or when bash output shows a denied path under your home directory.", "warning");
+			return;
+		}
+		const idx = blockedHistory.length - n;
+		if (idx < 0) {
+			ctx.ui.notify(`No blocked path at position ${n} (only ${blockedHistory.length} recorded). Use /sandbox-blocked to list them.`, "warning");
+			return;
+		}
+		const entry = blockedHistory[idx];
+		// Directory blocks unlock the directory itself; file blocks unlock
+		// the parent directory so the whole subtree becomes reachable.
+		const target = unlockTargetFor(entry.path);
+		if (global) {
+			try {
+				addGlobalUnlockedPath(target);
+				reloadGlobalConfig();
+			} catch (err) {
+				ctx.ui.notify(`${command} failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+				return;
+			}
+		} else {
+			unlockedPaths.add(target);
+			symlinkTargets.add(target);
+		}
+		const unlockedLine = target === entry.path
+			? `🔓 Unlocked${global ? " globally" : ""}: ${displayPath(entry.path)}`
+			: `🔓 Unlocked${global ? " globally" : ""}: ${displayPath(target)} (parent directory of ${displayPath(entry.path)})`;
+		const persistLine = global
+			? `   Saved to ${displayPath(globalConfigPath())}; applies to every project.`
+			: "   Run /save-sandbox-config to persist across sessions.";
+		ctx.ui.notify(
+			`${unlockedLine}\n` +
+			`   blocked by ${entry.tool} (${ageMs(entry.timestamp)} ago), source: "${entry.original}"\n` +
+			persistLine,
+			"info",
+		);
+		pi.sendMessage({
+			customType: "sandbox-paths",
+			content:
+				`The sandbox has unlocked the path "${displayPath(target)}". ` +
+				"Access to this directory and everything under it is now allowed.",
+			display: false,
+		}, { deliverAs: "followUp", triggerTurn: true });
+		refreshStatus(ctx);
+	}
+
 	// /unlock-last-path - unlock the directory of the most recently blocked path (or nth-to-last)
 	pi.registerCommand("unlock-last-path", {
 		description: "Unlock the directory of the most recently blocked sandbox path, or the nth-to-last when given a number (e.g. /unlock-last-path 2). Blocked files unlock their parent directory",
-		handler: async (args, ctx) => {
-			const arg = args.trim();
-			const n = arg.length > 0 ? parseInt(arg, 10) : 1;
-			if (!Number.isInteger(n) || n < 1) {
-				ctx.ui.notify(`Invalid argument "${arg}": expected a positive integer (1 = last blocked, 2 = second-to-last, ...)`, "error");
-				return;
-			}
-			if (blockedHistory.length === 0) {
-				ctx.ui.notify("No blocked paths recorded yet. The sandbox records a path when a path tool is blocked or when bash output shows a denied path under your home directory.", "warning");
-				return;
-			}
-			const idx = blockedHistory.length - n;
-			if (idx < 0) {
-				ctx.ui.notify(`No blocked path at position ${n} (only ${blockedHistory.length} recorded). Use /sandbox-blocked to list them.`, "warning");
-				return;
-			}
-			const entry = blockedHistory[idx];
-			// Directory blocks unlock the directory itself; file blocks unlock
-			// the parent directory so the whole subtree becomes reachable.
-			const target = unlockTargetFor(entry.path);
-			unlockedPaths.add(target);
-			symlinkTargets.add(target);
-			const unlockedLine = target === entry.path
-				? `🔓 Unlocked: ${displayPath(entry.path)}`
-				: `🔓 Unlocked: ${displayPath(target)} (parent directory of ${displayPath(entry.path)})`;
-			ctx.ui.notify(
-				`${unlockedLine}\n` +
-				`   blocked by ${entry.tool} (${ageMs(entry.timestamp)} ago), source: "${entry.original}"\n` +
-				`   Run /save-sandbox-config to persist across sessions.`,
-				"info",
-			);
-			pi.sendMessage({
-				customType: "sandbox-paths",
-				content:
-					`The sandbox has unlocked the path "${displayPath(target)}". ` +
-					"Access to this directory and everything under it is now allowed.",
-				display: false,
-			}, { deliverAs: "followUp", triggerTurn: true });
-			refreshStatus(ctx);
-		},
+		handler: async (args, ctx) => unlockBlockedPath(args, ctx, false),
+	});
+
+	// /unlock-last-path-globally - same, but saved to the global config for every project
+	pi.registerCommand("unlock-last-path-globally", {
+		description: "Like /unlock-last-path, but saves the unlocked directory to the global sandbox config in ~/.pi/agent so it applies to every project",
+		handler: async (args, ctx) => unlockBlockedPath(args, ctx, true),
 	});
 
 	// /sandbox-blocked - list recently blocked paths

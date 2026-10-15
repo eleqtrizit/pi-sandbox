@@ -2,7 +2,7 @@
  * Human-facing rendering for the sandbox: status line and startup banner.
  */
 
-import { HOME, blockedHistory, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
+import { HOME, allUnlockedPaths, blockedHistory, sandboxState, symlinkTargets } from "./state.js";
 import { EXACT_ALLOWED_PATHS, PREFIX_ALLOWED_PATHS, homeAllowlist } from "./allowlist.js";
 import { relativeSafe } from "./fs-utils.js";
 import type { SandboxConfig } from "./config.js";
@@ -29,7 +29,7 @@ export function ageMs(ts: number): string {
 
 /** One-line sandbox summary for the footer status line. */
 export function statusLine(): string {
-	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${unlockedPaths.size} | blocked: ${blockedHistory.length}`;
+	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${allUnlockedPaths().length} | blocked: ${blockedHistory.length}`;
 }
 
 /**
@@ -60,11 +60,12 @@ export function buildBanner(cwd: string, configPath: string | null, cfg: Sandbox
 			lines.push(`     ${displayPath(t)}`);
 		}
 	}
-	if (unlockedPaths.size === 0) {
+	const unlocked = allUnlockedPaths();
+	if (unlocked.length === 0) {
 		lines.push("   Unlocked paths: (none)");
 	} else {
-		lines.push(`   Unlocked paths (${unlockedPaths.size}):`);
-		for (const p of unlockedPaths) {
+		lines.push(`   Unlocked paths (${unlocked.length}):`);
+		for (const p of unlocked) {
 			lines.push(`     ${displayPath(p)}`);
 		}
 	}

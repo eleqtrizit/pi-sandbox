@@ -7,7 +7,7 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { EXACT_ALLOWED_PATHS, PREFIX_ALLOWED_PATHS, homeAllowlist } from "./allowlist.js";
-import { symlinkTargets, unlockedPaths } from "./state.js";
+import { allUnlockedPaths, symlinkTargets } from "./state.js";
 import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, tryRealpath } from "./fs-utils.js";
 
 /** What a tool does with a path: read-only home entries allow only "read". */
@@ -48,7 +48,7 @@ export function isAllowedPath(resolvedPath: string, access: PathAccess = "write"
 		}
 
 		// Paths explicitly unlocked by the user via /unlock-last-path.
-		if ([...unlockedPaths].some((allowed) => isUnderRealPrefix(candidate, allowed))) {
+		if (allUnlockedPaths().some((allowed) => isUnderRealPrefix(candidate, allowed))) {
 			return true;
 		}
 

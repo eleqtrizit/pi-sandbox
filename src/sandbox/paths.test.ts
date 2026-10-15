@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { HOME, resetState, sandboxState, unlockedPaths } from "./state.js";
+import { HOME, globalUnlockedPaths, resetState, sandboxState, unlockedPaths } from "./state.js";
 import { checkPath, isInsideSandbox, unlockTargetFor } from "./paths.js";
 
 let sandboxDir: string;
@@ -51,6 +51,11 @@ describe("checkPath", () => {
 		expect(checkPath(p, sandboxDir, "read").allowed).toBe(true);
 		expect(checkPath(p, sandboxDir, "write").allowed).toBe(false);
 		expect(checkPath(p, sandboxDir).allowed).toBe(false);
+	});
+
+	it("allows paths under a globally unlocked directory", () => {
+		globalUnlockedPaths.add(HOME);
+		expect(checkPath(HOME, sandboxDir).allowed).toBe(true);
 	});
 
 	it("allows paths under the always-allowed ~/.agents prefix", () => {

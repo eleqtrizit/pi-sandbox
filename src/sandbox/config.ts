@@ -6,8 +6,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { markSymlinkScan, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
+import { dirname, join } from "node:path";
+import { HOME, globalUnlockedPaths, markSymlinkScan, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 
 /** Serialized sandbox state written by /save-sandbox-config. */
 export interface SandboxConfig {
@@ -108,4 +108,53 @@ export function currentConfig(): SandboxConfig {
 		unlockedPaths: [...unlockedPaths],
 		savedAt: new Date().toISOString(),
 	};
+}
+
+/** Global config path: ~/.pi/agent/<basename>. Shared by every project. */
+export function globalConfigPath(home: string = HOME): string {
+	return join(home, ".pi", "agent", CONFIG_BASENAME);
+}
+
+/**
+ * Read the global unlocked paths. A missing file yields an empty list.
+ * @throws Error when the file exists but cannot be parsed, so a hand-edited
+ *   file is never silently overwritten.
+ */
+export function loadGlobalUnlockedPaths(path: string = globalConfigPath()): string[] {
+	if (!existsSync(path)) {
+		return [];
+	}
+	const cfg = loadSandboxConfigFromPath(path);
+	if (!cfg) {
+		throw new Error(`Global sandbox config at ${path} is unreadable; fix or delete it`);
+	}
+	return cfg.unlockedPaths;
+}
+
+/**
+ * Add `target` to the global config file and save it immediately. Only
+ * `unlockedPaths` is stored; lock state and symlink targets stay per project.
+ * @throws Error when the existing file is unreadable or cannot be written.
+ */
+export function addGlobalUnlockedPath(target: string, path: string = globalConfigPath()): void {
+	const paths = [...new Set([...loadGlobalUnlockedPaths(path), target])];
+	const cfg: Pick<SandboxConfig, "version" | "unlockedPaths" | "savedAt"> = {
+		version: 1,
+		unlockedPaths: paths,
+		savedAt: new Date().toISOString(),
+	};
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+}
+
+/**
+ * Replace the live global unlocked paths with the file's contents.
+ * @throws Error when the file exists but is unreadable.
+ */
+export function reloadGlobalConfig(path: string = globalConfigPath()): void {
+	const paths = loadGlobalUnlockedPaths(path);
+	globalUnlockedPaths.clear();
+	for (const p of paths) {
+		globalUnlockedPaths.add(p);
+	}
 }

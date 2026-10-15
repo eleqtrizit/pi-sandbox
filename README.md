@@ -57,6 +57,8 @@ Symlinks that exist when the session starts (for example `./common -> ../common`
 
 The sandbox config file lives at `./.pi/` + the config basename in the project root, with a fallback to `./.agents/`. It stores lock state, allowlisted symlink targets, and unlocked paths. It is a trust anchor: only the slash commands may write it. Any tool whose input references the file is blocked.
 
+A global config with the same basename lives in `~/.pi/agent/`. It stores only `unlockedPaths`, written by `/unlock-last-path-globally`. At session start its paths are merged with the project config, and a project snapshot (`/save-sandbox-config`) never copies them. An unreadable global file is reported and never overwritten.
+
 ## Commands
 
 | Command | Description |
@@ -65,6 +67,7 @@ The sandbox config file lives at `./.pi/` + the config basename in the project r
 | `/lock-sandbox` | Re-enable all sandbox checks. |
 | `/save-sandbox-config` | Persist the current sandbox state to the config file. |
 | `/unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/unlock-last-path 2`). Blocked files unlock their parent directory. Bash denials are read back from the command's error output (lines such as "Operation not permitted" that name a path under `$HOME`). Sends the unlocked directory to the agent. |
+| `/unlock-last-path-globally` | Like `/unlock-last-path`, but saves the directory to the global config in `~/.pi/agent/` at once, reloads it, and applies it to every project. |
 | `/sandbox-blocked` | List the 20 most recently blocked paths with their `/unlock-last-path` index. |
 
 The footer status line always shows the current state: lock state, symlink target count, unlocked path count, and blocked attempt count.
@@ -81,7 +84,8 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | `os-sandbox.ts` | Seatbelt profile generation, `sandbox-exec` wrapping, bubblewrap argument generation with an AppArmor-aware availability probe |
 | `allowlist.ts` | The single list of default allowed paths, shared by both layers and the banner |
 | `paths.ts` | Allow lists and `checkPath` for the in-process tools |
-| `config.ts` | Config load, save, apply, and snapshot |
+| `config.ts` | Project config load, save, apply, and snapshot; global config load, add, and reload |
+| `denials.ts` | Extracts denied `$HOME` paths from bash error output |
 | `display.ts` | Footer status line and startup banner |
 | `index.ts` | The sandboxed bash tool, `tool_call` interception, and slash commands |
 

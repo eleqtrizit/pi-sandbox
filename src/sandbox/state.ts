@@ -64,6 +64,18 @@ export const blockedHistory: BlockedEntry[] = [];
 export const unlockedPaths: Set<string> = new Set();
 
 /**
+ * Paths unlocked for every project by /unlock-last-path-globally. Loaded from
+ * the global config file and kept apart from `unlockedPaths` so that
+ * /save-sandbox-config never copies them into a project config.
+ */
+export const globalUnlockedPaths: Set<string> = new Set();
+
+/** Every unlocked path in effect: project-local plus global. */
+export function allUnlockedPaths(): string[] {
+	return [...new Set([...unlockedPaths, ...globalUnlockedPaths])];
+}
+
+/**
  * Record a blocked path attempt for the /unlock-last-path workflow. The
  * resolved path is realpath'd so the stored form matches the realpath'd
  * candidates that isAllowedPath checks. Each path is kept at most once: a
@@ -91,4 +103,5 @@ export function resetState(): void {
 	markSymlinkScan(0);
 	blockedHistory.length = 0;
 	unlockedPaths.clear();
+	globalUnlockedPaths.clear();
 }

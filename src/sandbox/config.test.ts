@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetState, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
+import { allUnlockedPaths, globalUnlockedPaths, resetState, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 import {
 	CONFIG_BASENAME,
+	addGlobalUnlockedPath,
 	applyConfig,
 	configCandidates,
 	currentConfig,
 	existingConfigPath,
+	globalConfigPath,
+	loadGlobalUnlockedPaths,
 	loadSandboxConfigFromPath,
+	reloadGlobalConfig,
 	saveSandboxConfig,
 } from "./config.js";
 
@@ -133,5 +137,75 @@ describe("applyConfig / currentConfig", () => {
 		expect(snap.symlinkTargets).toEqual(["/target"]);
 		expect(snap.unlockedPaths).toEqual(["/unlocked"]);
 		expect(snap.savedAt).toBeDefined();
+	});
+});
+
+describe("global config", () => {
+	it("lives under ~/.pi/agent", () => {
+		expect(globalConfigPath("/h")).toBe(join("/h", ".pi", "agent", configName));
+	});
+
+	it("loads an empty list when the file is missing", () => {
+		const dir = mkdtempSync(join(tmpdir(), "cfg-global-"));
+		try {
+			expect(loadGlobalUnlockedPaths(join(dir, "nope.json"))).toEqual([]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("creates the directory, saves immediately, and dedupes", () => {
+		const dir = mkdtempSync(join(tmpdir(), "cfg-global-"));
+		const path = join(dir, "nested", "agent", configName);
+		try {
+			addGlobalUnlockedPath("/a", path);
+			addGlobalUnlockedPath("/b", path);
+			addGlobalUnlockedPath("/a", path);
+			expect(loadGlobalUnlockedPaths(path)).toEqual(["/a", "/b"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("stores only unlocked paths, not lock state or symlink targets", () => {
+		const dir = mkdtempSync(join(tmpdir(), "cfg-global-"));
+		const path = join(dir, configName);
+		try {
+			addGlobalUnlockedPath("/a", path);
+			const raw = JSON.parse(readFileSync(path, "utf8"));
+			expect(Object.keys(raw).sort()).toEqual(["savedAt", "unlockedPaths", "version"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses to overwrite an unreadable file", () => {
+		const dir = mkdtempSync(join(tmpdir(), "cfg-global-"));
+		const path = join(dir, configName);
+		try {
+			writeFileSync(path, "not json");
+			expect(() => addGlobalUnlockedPath("/a", path)).toThrow(/unreadable/);
+			expect(readFileSync(path, "utf8")).toBe("not json");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reloads into global state without touching project unlocked paths", () => {
+		const dir = mkdtempSync(join(tmpdir(), "cfg-global-"));
+		const path = join(dir, configName);
+		try {
+			unlockedPaths.add("/local");
+			addGlobalUnlockedPath("/g1", path);
+			reloadGlobalConfig(path);
+			addGlobalUnlockedPath("/g2", path);
+			reloadGlobalConfig(path);
+			expect([...globalUnlockedPaths]).toEqual(["/g1", "/g2"]);
+			expect(allUnlockedPaths().sort()).toEqual(["/g1", "/g2", "/local"]);
+			// A project snapshot never absorbs the global paths.
+			expect(currentConfig().unlockedPaths).toEqual(["/local"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
