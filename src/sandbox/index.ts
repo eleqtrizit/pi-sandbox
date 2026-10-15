@@ -51,6 +51,9 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 
 	// Override the built-in bash tool so every command runs inside the OS
 	// sandbox. Programs stay runnable; only file access is filtered.
+	// Symlink targets are allowlisted once at session start (and by
+	// /save-sandbox-config). Re-scanning here would let an agent allowlist
+	// any path it can name by creating a symlink to it in its own arena.
 	const bashTool = createBashTool(process.cwd(), {
 		spawnHook: ({ command, cwd, env }) => {
 			if (!sandboxState.locked) {
@@ -62,9 +65,6 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 					`Sandbox blocked: ${what} is not available on this platform. ` +
 					"Install it, or disable confinement with /unlock-sandbox.",
 				);
-			}
-			for (const target of collectSymlinkTargets(cwd)) {
-				symlinkTargets.add(target);
 			}
 			return { command: osSandbox.wrap(command, profileInputFor(cwd)), cwd, env };
 		},

@@ -49,7 +49,7 @@ These paths are allowed from any sandbox, in both layers:
 
 ### Symlinks inside the sandbox
 
-Symlinks found inside the sandbox directory (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working.
+Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: re-scanning on every command would let an agent allowlist any path it can name by creating a link to it. Run `/save-sandbox-config` to rescan deliberately.
 
 ### Sandbox config file
 
