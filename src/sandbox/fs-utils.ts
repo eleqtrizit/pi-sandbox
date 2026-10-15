@@ -4,7 +4,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { HOME } from "./state.js";
 
 /**
@@ -25,6 +25,33 @@ export function realpathThroughExisting(path: string): string {
 		}
 	}
 	return resolve(path);
+}
+
+/**
+ * Resolve `path` against `base` the way the kernel does: walk it segment by
+ * segment and resolve the existing prefix through realpath before each `..`.
+ * `path.resolve` collapses `link/..` lexically, but the kernel follows `link`
+ * first, so `common/../x` lands next to the symlink target, not next to
+ * `common`. Once a prefix no longer exists, the rest is joined lexically.
+ */
+export function resolveLikeKernel(path: string, base: string): string {
+	// Split raw strings: join/resolve would collapse `link/..` before we see it.
+	const segments = isAbsolute(path) ? path.split("/") : [...resolve(base).split("/"), ...path.split("/")];
+	let current = "/";
+	let existing = true;
+	for (const segment of segments) {
+		if (segment === "" || segment === ".") {
+			continue;
+		}
+		if (segment === "..") {
+			current = dirname(existing ? tryRealpath(current) : current);
+			existing = existsSync(current);
+			continue;
+		}
+		current = join(current, segment);
+		existing = existing && existsSync(current);
+	}
+	return existing ? tryRealpath(current) : realpathThroughExisting(current);
 }
 
 /**

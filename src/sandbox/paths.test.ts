@@ -223,6 +223,54 @@ describe("checkBashCommand", () => {
 		expect(result.original).toBe(`${HOME}/.zshrc`);
 	});
 
+	describe("relative and symlink .. escapes", () => {
+		// Mirror two sibling arenas that share a `common` dir through symlinks:
+		// <parent>/{arena,other,common}, arena/common -> ../common.
+		let parent: string;
+		let arena: string;
+
+		beforeEach(() => {
+			parent = mkdtempSync(join(HOME, ".sandbox-dotdot-tests-"));
+			arena = join(parent, "arena");
+			for (const d of ["arena", "other", "common"]) {
+				mkdirSync(join(parent, d));
+			}
+			symlinkSync("../common", join(arena, "common"));
+			writeFileSync(join(parent, "other", "secret.py"), "x");
+			writeFileSync(join(parent, "common", "q.md"), "x");
+		});
+
+		afterEach(() => {
+			rmSync(parent, { recursive: true, force: true });
+		});
+
+		it.each([
+			"cat ../other/secret.py",
+			"cat ./common/../other/secret.py",
+			"cat common/../other/secret.py",
+			"echo pwned > ../other/new.txt",
+			"echo pwned >../other/new.txt",
+		])("blocks %s", (command) => {
+			expect(checkBashCommand(command, arena).allowed).toBe(false);
+		});
+
+		it("blocks an absolute path that leaves through a symlink and ..", () => {
+			expect(checkBashCommand(`cat ${arena}/common/../other/secret.py`, arena).allowed).toBe(false);
+		});
+
+		it("allows .. paths that stay inside the sandbox", () => {
+			mkdirSync(join(arena, "a"));
+			writeFileSync(join(arena, "b.txt"), "x");
+			expect(checkBashCommand("cat a/../b.txt", arena).allowed).toBe(true);
+			expect(checkBashCommand("cat ./a/../b.txt", arena).allowed).toBe(true);
+		});
+
+		it("still allows plain relative paths and missing .. targets", () => {
+			expect(checkBashCommand("ls common", arena).allowed).toBe(true);
+			expect(checkBashCommand("rg foo ../no/such/dir", arena).allowed).toBe(true);
+		});
+	});
+
 	it("resumes scanning after the heredoc terminator", () => {
 		const command = [`cat >> file.md <<'EOF'`, "/", "EOF", `cat ${HOME}/.zshrc`].join("\n");
 		expect(checkBashCommand(command, sandboxDir).allowed).toBe(false);

@@ -7,7 +7,7 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { HOME, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
-import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, tryRealpath } from "./fs-utils.js";
+import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, resolveLikeKernel, tryRealpath } from "./fs-utils.js";
 import { refreshAndRecheck } from "./symlinks.js";
 
 /**
@@ -231,6 +231,14 @@ export function isCommentToken(token: string): boolean {
 	return /^\s*\/\/+/.test(token) || /^\s*\/\*/.test(token);
 }
 
+/** Shell redirect operators that can be glued to a path token (`>`, `2>>`, `<`, `&>`). */
+const REDIRECT_PREFIX = /^(?:\d*|&)?[<>]{1,2}/;
+
+/** True when the token has a `..` path segment, e.g. `../x` or `a/../b`. */
+export function hasParentSegment(token: string): boolean {
+	return token.replace(REDIRECT_PREFIX, "").split("/").includes("..");
+}
+
 /**
  * Check if a token looks like a filesystem path and, if so, whether it exists
  * outside the sandbox.
@@ -241,7 +249,8 @@ export function isCommentToken(token: string): boolean {
  * regex patterns, etc. that happen to start with "/" or "~").
  */
 export function checkPathToken(token: string, sandboxDir: string): PathCheckResult {
-	if (!token.startsWith("/") && !token.startsWith("~")) {
+	const pathLike = token.startsWith("/") || token.startsWith("~") || hasParentSegment(token);
+	if (!pathLike) {
 		return { allowed: true };
 	}
 
@@ -251,11 +260,15 @@ export function checkPathToken(token: string, sandboxDir: string): PathCheckResu
 	}
 
 	const realSandboxDir = tryRealpath(resolve(sandboxDir));
-	const expanded = expandTilde(token);
 	const sandboxRoot = sandboxState.symlinkMode ? resolve(sandboxDir) : realSandboxDir;
-	const resolved = resolve(sandboxRoot, expanded);
+	// Redirect operators glue onto the path (`>../x`, `2>>../x`); strip them.
+	const expanded = expandTilde(token.replace(REDIRECT_PREFIX, ""));
+	const lexical = resolve(sandboxRoot, expanded);
+	// A `..` after a symlink leaves through the link target, as the shell does.
+	const resolved = hasParentSegment(expanded) ? resolveLikeKernel(expanded, sandboxRoot) : lexical;
 
-	if (!existsSync(resolved)) {
+	// A write target need not exist yet, so judge `..` paths by their parent.
+	if (!existsSync(resolved) && !(hasParentSegment(expanded) && existsSync(dirname(resolved)))) {
 		return { allowed: true };
 	}
 

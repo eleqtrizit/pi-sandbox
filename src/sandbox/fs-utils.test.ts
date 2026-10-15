@@ -1,9 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expandTilde, isUnderPrefix, isUnderRealPrefix, relativeSafe, tryRealpath } from "./fs-utils.js";
+import { expandTilde, isUnderPrefix, isUnderRealPrefix, relativeSafe, resolveLikeKernel, tryRealpath } from "./fs-utils.js";
 import { HOME } from "./state.js";
+
+describe("resolveLikeKernel", () => {
+	it("follows a symlink before applying ..", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "rlk-")));
+		try {
+			mkdirSync(join(root, "arena"));
+			mkdirSync(join(root, "shared", "deep"), { recursive: true });
+			symlinkSync("../shared/deep", join(root, "arena", "link"));
+			// Lexically: arena/link/../x -> arena/x. Kernel: shared/deep/.. -> shared/x.
+			expect(resolveLikeKernel("link/../x", join(root, "arena"))).toBe(join(root, "shared", "x"));
+			expect(resolveLikeKernel(`${root}/arena/link/../x`, "/")).toBe(join(root, "shared", "x"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("matches lexical resolution when no symlinks are involved", () => {
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "rlk-")));
+		try {
+			mkdirSync(join(root, "a"));
+			expect(resolveLikeKernel("a/../b", root)).toBe(join(root, "b"));
+			expect(resolveLikeKernel("./a/./c", root)).toBe(join(root, "a", "c"));
+			expect(resolveLikeKernel("missing/../../up", join(root, "a"))).toBe(join(root, "up"));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("tryRealpath", () => {
 	it("returns the resolved path for an existing path", () => {
