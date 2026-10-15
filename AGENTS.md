@@ -30,8 +30,11 @@ Invariants:
 - **Bash fails closed** when the platform sandbox is unavailable. On Linux that
   is decided by `probeBwrap()` in `src/sandbox/os-sandbox.ts`: it runs a real
   bubblewrap command once, because Ubuntu 24.04+ AppArmor can restrict
-  unprivileged user namespaces even when bwrap is installed. When the probe
-  fails, Linux bash calls block with the probe reason.
+  unprivileged user namespaces even when bwrap is installed. When it fails,
+  the Landlock fallback (`src/sandbox/landlock.py`, probed by
+  `probeLandlock()`) confines bash without namespaces. Bash blocks only when
+  both probes fail. The Landlock helper must stay fail-closed: it never
+  execs the command if any restriction step errors.
 - **All CLIs stay runnable.** The Seatbelt profile is `(allow default)` plus a
   deny on file access under the home directory, re-allowing the sandbox dir,
   scanned symlink targets, unlocked paths, `~/.pi`, `~/.agents`, and read-only

@@ -6,13 +6,16 @@ import { describe, expect, it } from "vitest";
 import { HOME, resetState } from "./state.js";
 import {
 	buildBwrapArgs,
+	buildLandlockArgs,
 	buildSeatbeltProfile,
 	detectOsSandbox,
 	ensureProfileFile,
 	existingRealPaths,
 	homeReadOnlyPaths,
 	homeReadWritePaths,
+	outsideHomeRoots,
 	probeBwrap,
+	probeLandlock,
 	sbplEscape,
 	shQuote,
 	wrapWithSeatbelt,
@@ -21,6 +24,7 @@ import {
 const SEATBELT = existsSync("/usr/bin/sandbox-exec");
 const LINUX = process.platform === "linux";
 const BWRAP = LINUX && probeBwrap().available;
+const LANDLOCK = LINUX && probeLandlock().available;
 
 describe("sbplEscape", () => {
 	it("escapes backslashes and double quotes for profile literals", () => {
@@ -149,14 +153,44 @@ describe("buildBwrapArgs", () => {
 	});
 });
 
-describe.skipIf(!LINUX)("linux bwrap wrap", () => {
-	it("uses the absolute bwrap binary and quotes the command", () => {
+describe("outsideHomeRoots", () => {
+	it("lists every sibling on the path to home, never home or its ancestors", () => {
+		const roots = outsideHomeRoots("/home/user");
+		expect(roots).not.toContain("/");
+		expect(roots).not.toContain("/home");
+		expect(roots).not.toContain("/home/user");
+		expect(roots.every((r) => r.split("/").length <= 3)).toBe(true);
+		if (existsSync("/usr")) expect(roots).toContain("/usr");
+	});
+});
+
+describe("buildLandlockArgs", () => {
+	it("grants the sandbox dir read-write and toolchains read-only, never all of $HOME", () => {
+		const sandbox = mkdtempSync(join(tmpdir(), "sb-ll-"));
+		try {
+			const args = buildLandlockArgs({ sandboxDir: sandbox, readWritePaths: [] });
+			const rw = args.filter((_, i) => args[i - 1] === "--rw");
+			const ro = args.filter((_, i) => args[i - 1] === "--ro");
+			expect(rw).toContain(sandbox);
+			expect(rw).not.toContain(homedir());
+			expect(rw).not.toContain("/");
+			for (const p of existingRealPaths(homeReadOnlyPaths())) {
+				if (!rw.includes(p)) expect(ro).toContain(p);
+			}
+		} finally {
+			rmSync(sandbox, { recursive: true, force: true });
+		}
+	});
+});
+
+describe.skipIf(!LINUX)("linux wrap", () => {
+	it("wraps with the selected backend and quotes the command", () => {
 		const sandbox = mkdtempSync(join(tmpdir(), "sb-wrap-"));
 		try {
 			const runner = detectOsSandbox();
 			const wrapped = runner!.wrap("echo 'hi'", { sandboxDir: sandbox, readWritePaths: [] });
-			expect(wrapped.startsWith("'/usr/bin/bwrap' '--die-with-parent'")).toBe(true);
-			expect(wrapped).toContain("'--unshare-pid'");
+			const prefix = runner!.kind === "bubblewrap" ? "'/usr/bin/bwrap' '--die-with-parent'" : "'/usr/bin/python3' '";
+			expect(wrapped.startsWith(prefix)).toBe(true);
 			expect(wrapped.endsWith(`'/bin/bash' '-c' ${shQuote("echo 'hi'")}`)).toBe(true);
 		} finally {
 			rmSync(sandbox, { recursive: true, force: true });
@@ -171,7 +205,8 @@ describe("detectOsSandbox", () => {
 			expect(runner?.kind).toBe("seatbelt");
 			expect(runner?.available).toBe(SEATBELT);
 		} else if (process.platform === "linux") {
-			expect(runner?.kind).toBe("bubblewrap");
+			expect(runner?.kind).toBe(BWRAP ? "bubblewrap" : "landlock");
+			expect(runner?.available).toBe(BWRAP || LANDLOCK);
 		} else {
 			expect(runner).toBeNull();
 		}
@@ -215,8 +250,8 @@ describe.skipIf(!SEATBELT || process.platform !== "darwin")("seatbelt enforcemen
 	});
 });
 
-/** Live kernel check: run only where bwrap probes clean on Linux. */
-describe.skipIf(!BWRAP)("bubblewrap enforcement", () => {
+/** Live kernel check on Linux, through whichever backend is selected (bwrap or Landlock). */
+describe.skipIf(!BWRAP && !LANDLOCK)("linux enforcement", () => {
 	it("blocks reads outside the sandbox and allows reads and writes inside it", () => {
 		const sandbox = mkdtempSync(join(HOME, ".bwrap-sb-"));
 		const outside = mkdtempSync(join(HOME, ".bwrap-out-"));
@@ -246,7 +281,7 @@ describe.skipIf(!BWRAP)("bubblewrap enforcement", () => {
 			expect(run("cat ../*/secret.txt").code).not.toBe(0);
 			expect(run(`echo "cat ${join(outside, "secret.txt")}" | sh`).code).not.toBe(0);
 			expect(run(`python3 -c "print(open('${join(outside, "secret.txt")}').read())"`).code).not.toBe(0);
-			// With pids unshared, /proc/1/root must not reach the real home.
+			// /proc/1/root must not reach the real home (bwrap: pids unshared; Landlock: / not granted).
 			expect(run(`cat /proc/1/root${join(outside, "secret.txt")}`).code).not.toBe(0);
 			// Normal CLIs keep working: node comes from the toolchain roots or /.
 			expect(run("node --version").code).toBe(0);

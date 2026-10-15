@@ -60,7 +60,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				return { command, cwd, env };
 			}
 			if (!osSandbox || !osSandbox.available) {
-				const what = osSandbox?.kind === "bubblewrap" ? "bubblewrap (bwrap)" : "the OS sandbox";
+				const what = osSandbox?.kind === "landlock" ? "bubblewrap or Landlock" : "the OS sandbox";
 				const why = osSandbox?.unavailableReason ? `: ${osSandbox.unavailableReason}` : "";
 				throw new Error(
 					`Sandbox blocked: ${what} is not available on this platform${why}. ` +

@@ -18,7 +18,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { tryRealpath } from "./fs-utils.js";
@@ -203,9 +203,66 @@ export function probeBwrap(): { available: boolean; reason?: string } {
 	return bwrapProbe;
 }
 
+/**
+ * Every filesystem entry outside `home`: at each level from `/` down to the
+ * home directory, all siblings of the path component leading to home.
+ * Landlock is allow-only, so "everything except $HOME" must be spelled out.
+ * The root itself is never granted, which also blocks /proc/<pid>/root.
+ */
+export function outsideHomeRoots(home: string = tryRealpath(homedir())): string[] {
+	const roots: string[] = [];
+	let dir = "/";
+	for (const part of home.split("/").filter(Boolean)) {
+		let names: string[] = [];
+		try {
+			names = readdirSync(dir);
+		} catch {
+			// Unreadable level: grant nothing there (fail closed).
+		}
+		roots.push(...names.filter((n) => n !== part).map((n) => join(dir, n)));
+		dir = join(dir, part);
+	}
+	return roots;
+}
+
+/** Build the landlock.py argument vector (before `--`) for the sandbox policy. */
+export function buildLandlockArgs({ sandboxDir, readWritePaths }: ProfileInput): string[] {
+	const rw = existingRealPaths([
+		resolve(sandboxDir),
+		...readWritePaths,
+		...baseReadWritePaths(),
+		...homeReadWritePaths(),
+	]);
+	const ro = existingRealPaths(homeReadOnlyPaths()).filter((p) => !isUnderAny(p, rw));
+	return [
+		...[...outsideHomeRoots(), ...rw].flatMap((p) => ["--rw", p]),
+		...ro.flatMap((p) => ["--ro", p]),
+	];
+}
+
+const LANDLOCK_HELPER = join(__dirname, "landlock.py");
+const PYTHON_BIN = "/usr/bin/python3";
+
+let landlockProbe: { available: boolean; reason?: string } | null = null;
+
+/** Probe Landlock support through the helper once; cached for the session. */
+export function probeLandlock(): { available: boolean; reason?: string } {
+	if (landlockProbe === null) {
+		if (!existsSync(PYTHON_BIN)) {
+			landlockProbe = { available: false, reason: `${PYTHON_BIN} is not installed` };
+		} else {
+			const r = spawnSync(PYTHON_BIN, [LANDLOCK_HELPER, "--probe"], { timeout: 5000, encoding: "utf8" });
+			landlockProbe = r.status === 0
+				? { available: true }
+				: { available: false, reason: `${r.error?.message ?? r.stderr?.trim() ?? `exit ${r.status}`}`.trim() };
+		}
+	}
+	return landlockProbe;
+}
+
 export interface OsSandboxRunner {
 	/** Platform identifier shown in status and errors. */
-	kind: "seatbelt" | "bubblewrap";
+	kind: "seatbelt" | "bubblewrap" | "landlock";
 	/** True when the OS sandbox binary for this platform is installed. */
 	available: boolean;
 	/** Why the sandbox is unavailable, when `available` is false. */
@@ -231,13 +288,25 @@ export function detectOsSandbox(): OsSandboxRunner | null {
 		};
 	}
 	if (process.platform === "linux") {
-		const probe = probeBwrap();
+		const bwrap = probeBwrap();
+		if (bwrap.available) {
+			return {
+				kind: "bubblewrap",
+				available: true,
+				wrap: (command, input) =>
+					[BWRAP_BIN, ...buildBwrapArgs(input), "/bin/bash", "-c", command].map(shQuote).join(" "),
+			};
+		}
+		// bwrap needs user namespaces, which AppArmor may block; Landlock does not.
+		const landlock = probeLandlock();
 		return {
-			kind: "bubblewrap",
-			available: probe.available,
-			unavailableReason: probe.reason,
+			kind: "landlock",
+			available: landlock.available,
+			unavailableReason: landlock.available ? undefined : `bwrap: ${bwrap.reason}; landlock: ${landlock.reason}`,
 			wrap: (command, input) =>
-				[BWRAP_BIN, ...buildBwrapArgs(input), "/bin/bash", "-c", command].map(shQuote).join(" "),
+				[PYTHON_BIN, LANDLOCK_HELPER, ...buildLandlockArgs(input), "--", "/bin/bash", "-c", command]
+					.map(shQuote)
+					.join(" "),
 		};
 	}
 	return null;
