@@ -51,7 +51,7 @@ These paths are allowed from any sandbox, in both layers:
 
 ### Symlinks inside the sandbox
 
-Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: re-scanning on every command would let an agent allowlist any path it can name by creating a link to it. Run `/sandbox-save-config` to rescan deliberately.
+Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: an earlier implementation re-scanned targets on every command, and a red-team probe demonstrated the bypass (fixed in commit 159e4df). With re-scanning, an agent could allowlist any path it can name by creating a link to it. Run `/sandbox-save-config` to rescan deliberately.
 
 ### Sandbox config file
 
