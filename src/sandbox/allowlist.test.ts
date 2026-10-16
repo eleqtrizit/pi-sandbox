@@ -17,9 +17,14 @@ describe("homeAllowlist", () => {
 
 	it("never lists secrets or all of ~/.local/share", () => {
 		const all = homeAllowlist("/h").map((e) => e.path);
-		for (const secret of ["/h/.ssh", "/h/.gnupg", "/h/.aws", "/h/.local/share", "/h"]) {
+		for (const secret of ["/h/.gnupg", "/h/.aws", "/h/.local/share", "/h"]) {
 			expect(all).not.toContain(secret);
 		}
+	});
+
+	it("allows ~/.ssh read-only for git remotes", () => {
+		expect(homePaths(false, "/h")).toContain("/h/.ssh");
+		expect(homePaths(true, "/h")).not.toContain("/h/.ssh");
 	});
 
 	it("has no duplicate paths", () => {

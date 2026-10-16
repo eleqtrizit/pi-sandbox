@@ -46,7 +46,7 @@ These paths are allowed from any sandbox, in both layers:
 - `~/.pi` and `~/.agents`
 - Device and pseudo-filesystem paths: `/dev/null`, `/dev/zero`, `/dev/stdout`, `/dev/stderr`, `/dev/stdin`, `/dev/tty`, `/dev/random`, `/dev/urandom`, `/dev/full`
 - Prefix trees: `/dev/fd`, `/proc/self/fd`, `/tmp`, `/var/folders`
-- Read-only toolchain and config paths under `$HOME`, so normal CLIs keep working: `~/.gitconfig`, `~/.config/git`, `~/.volta`, `~/.local/bin`, `~/.local/share/uv`, `~/.cargo/bin`. Secrets like `~/.ssh`, `~/.gnupg`, and `~/.aws` are deliberately not listed.
+- Read-only toolchain and config paths under `$HOME`, so normal CLIs keep working: `~/.gitconfig`, `~/.config/git`, `~/.ssh`, `~/.volta`, `~/.local/bin`, `~/.local/share/uv`, `~/.cargo/bin`. `~/.ssh` is read-only because ssh remotes need the keys and `known_hosts`. Secrets like `~/.gnupg` and `~/.aws` are deliberately not listed.
 - Read-write cache paths under `$HOME` so package managers keep working: `~/.cache`, `~/.npm`.
 
 ### Symlinks inside the sandbox

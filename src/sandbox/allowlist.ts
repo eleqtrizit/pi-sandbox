@@ -4,7 +4,8 @@
  * builders, the in-process path checks, and the startup banner. Add or remove
  * a default path in this file only.
  *
- * Secrets like ~/.ssh, ~/.gnupg and ~/.aws are deliberately not listed.
+ * Secrets like ~/.gnupg and ~/.aws are deliberately not listed; ~/.ssh is
+ * read-only because git remotes over ssh need it.
  */
 
 import { join, resolve } from "node:path";
@@ -36,6 +37,7 @@ export function homeAllowlist(home: string = HOME): HomeAllowEntry[] {
 		entry(".cache", true, "package manager and build caches"),
 		entry(".npm", true, "npm cache"),
 		entry(".gitconfig", false, "git identity"),
+	entry(".ssh", false, "ssh keys and known_hosts so git push works"),
 		entry(join(".config", "git"), false, "git configuration"),
 		entry(".volta", false, "node toolchain shims"),
 		entry(join(".local", "bin"), false, "user-installed executables"),
