@@ -1,7 +1,9 @@
 /**
  * Sandbox extension wiring: session hooks, the OS-sandboxed bash tool,
- * in-process tool_call interception for path-based tools, and the slash
- * commands. Kernel confinement lives in os-sandbox.ts; path decisions for
+ * in-process tool_call interception for path-based tools, the slash commands,
+ * and the factory-time subscription to the pi-sandbox:allow-path event
+ * (handled in registry.ts) so extensions without an import can allow extra
+ * directories. Kernel confinement lives in os-sandbox.ts; path decisions for
  * pi's own tools live in paths.ts.
  */
 
@@ -9,7 +11,7 @@ import { type ExtensionAPI, type ExtensionContext, createBashTool, isToolCallEve
 import { allUnlockedPaths, blockedHistory, extensionPaths, recordBlocked, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 import { isUnderRealPrefix, tryRealpath } from "./fs-utils.js";
 import { checkPath, unlockTargetFor } from "./paths.js";
-import { validExtensionPaths } from "./registry.js";
+import { subscribeAllowPathEvent, validExtensionPaths } from "./registry.js";
 import { collectSymlinkTargets } from "./symlinks.js";
 import { extractDeniedHomePaths } from "./denials.js";
 import { detectOsSandbox, type ProfileInput } from "./os-sandbox.js";
@@ -37,6 +39,10 @@ function restoreOnSessionStart(ctx: ExtensionContext): { configPath: string | nu
 }
 
 export default function registerSandbox(pi: ExtensionAPI): void {
+	// Tracks the most recent session context so factory-time event handlers
+	// can refresh UI state without waiting for a new session_start.
+	let currentCtx: ExtensionContext | undefined;
+
 	/** Refresh the footer status line with the current sandbox state. */
 	function refreshStatus(ctx: ExtensionContext): void {
 		if (ctx.hasUI) {
@@ -53,6 +59,20 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	}
 
 	const osSandbox = detectOsSandbox();
+
+	// Subscribe to allow-path events from other pi extensions at factory time.
+	// All extension factories run before any session_start fires, so this
+	// covers every load order. pi's loader unsubscribes automatically on reload
+	// via trackEventBusSubscription.
+	subscribeAllowPathEvent(pi.events, (_path) => {
+		if (currentCtx) {
+			refreshStatus(currentCtx);
+		}
+	}, (reason) => {
+		if (currentCtx?.hasUI) {
+			currentCtx.ui.notify(`pi-sandbox: allow-path event rejected: ${reason}`, "warning");
+		}
+	});
 
 	// Override the built-in bash tool so every command runs inside the OS
 	// sandbox. Programs stay runnable; only file access is filtered.
@@ -82,6 +102,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 
 	// Autoload the saved sandbox config on session start, then announce settings.
 	pi.on("session_start", async (event, ctx) => {
+		currentCtx = ctx;
 		const { configPath, cfg } = restoreOnSessionStart(ctx);
 		try {
 			reloadGlobalConfig();

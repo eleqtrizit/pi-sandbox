@@ -3,7 +3,10 @@
  *
  * A consumer extension imports registerAllowedPath from this package (same
  * process, same module instance) and calls it from its factory or
- * session_start. Load order does not matter: both enforcement layers read
+ * session_start. Extensions that cannot import this package can instead emit
+ * a pi-sandbox:allow-path event on pi's shared event bus;
+ * subscribeAllowPathEvent wires that channel to the same registry.
+ * Load order does not matter: both enforcement layers read
  * extensionPaths lazily on every operation (checkPath per tool call,
  * profileInputFor per bash spawn), so a path registered at any point is
  * enforced from the next call onward.
@@ -83,4 +86,93 @@ export function validExtensionPaths(): string[] {
 /** All extension-registered allowed paths, realpath-resolved. */
 export function registeredAllowedPaths(): string[] {
 	return [...extensionPaths];
+}
+
+/**
+ * Channel other extensions emit on to allow an extra sandbox directory
+ * without importing this package. Single source of truth for the channel
+ * name; emitters and subscribers must both use this literal.
+ */
+export const ALLOW_PATH_EVENT = "pi-sandbox:allow-path";
+
+/**
+ * Payload an extension emits on {@link ALLOW_PATH_EVENT}. Same shape
+ * registerAllowedPath accepts.
+ */
+export interface AllowPathEventPayload {
+	/** Directory to allow. Must be an absolute or tilde path. */
+	path: string;
+}
+
+/**
+ * Structural event bus type with a Node-compatible `on`. Tests can pass a
+ * plain EventEmitter and this module stays free of a dependency on pi's
+ * EventBus export.
+ */
+export interface AllowPathEventBus {
+	/** Subscribe to `channel`; returns a function that unsubscribes. */
+	on(channel: string, handler: (data: unknown) => void): () => void;
+}
+
+/**
+ * Outcome of handling one allow-path event: the resolved stored path on
+ * success, or a human-readable rejection reason.
+ */
+export type AllowPathEventResult = { ok: true; path: string } | { ok: false; reason: string };
+
+/**
+ * Validate and apply one allow-path event payload.
+ *
+ * Trust model: any in-process extension can expand the sandbox by emitting
+ * on {@link ALLOW_PATH_EVENT}. This carries the same trust level as a
+ * direct registerAllowedPath import and adds no extra gate. Registrations
+ * are session-local and never persisted to the sandbox config file.
+ *
+ * @param data - Raw event payload from the bus.
+ * @returns `ok: true` with the resolved path as stored in the registry, or
+ *   `ok: false` with the rejection reason. The registry is untouched on
+ *   rejection.
+ */
+export function handleAllowPathEvent(data: unknown): AllowPathEventResult {
+	if (typeof data !== "object" || data === null || !("path" in data)) {
+		return { ok: false, reason: "allow-path event payload must be an object with a path" };
+	}
+	const path: unknown = (data as { path: unknown }).path;
+	if (typeof path !== "string" || path.length === 0) {
+		return { ok: false, reason: "allow-path event payload must carry a non-empty string path" };
+	}
+	try {
+		return { ok: true, path: registerAllowedPath(path) };
+	} catch (error) {
+		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/**
+ * Subscribe `bus` to {@link ALLOW_PATH_EVENT} and route each event through
+ * {@link handleAllowPathEvent}.
+ *
+ * Trust model: same as handleAllowPathEvent. Any in-process extension can
+ * expand the sandbox by emitting, at the same trust level as a direct
+ * registerAllowedPath import. Registrations are session-local and never
+ * persisted.
+ *
+ * @param bus - Event bus to subscribe on; pi's shared event bus.
+ * @param onRegistered - Called with the resolved stored path on success.
+ * @param onRejected - Called with the rejection reason on failure.
+ * @returns The unsubscribe function that `bus.on` returned.
+ */
+export function subscribeAllowPathEvent(
+	bus: AllowPathEventBus,
+	onRegistered: (path: string) => void,
+	onRejected: (reason: string) => void,
+): () => void {
+	return bus.on(ALLOW_PATH_EVENT, (data: unknown) => {
+		const result = handleAllowPathEvent(data);
+		if (result.ok) {
+			onRegistered(result.path);
+		} else {
+			onRejected(result.reason);
+		}
+	});
 }

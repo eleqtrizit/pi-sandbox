@@ -79,7 +79,7 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | Module | Responsibility |
 |--------|----------------|
 | `state.ts` | Mutable sandbox state and the blocked-path history ring buffer |
-| `registry.ts` | `registerAllowedPath()`: lets other extensions allow extra directories |
+| `registry.ts` | `registerAllowedPath()` and the `pi-sandbox:allow-path` event channel: let other extensions allow extra directories |
 | `fs-utils.ts` | Realpath, tilde expansion, and prefix comparison helpers |
 | `symlinks.ts` | Symlink scanning (fd with a manual-walk fallback) for allowlisted targets |
 | `os-sandbox.ts` | Seatbelt profile generation, `sandbox-exec` wrapping, bubblewrap argument generation with an AppArmor-aware availability probe |
@@ -92,7 +92,11 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 
 ## Allowing extra directories from other extensions
 
-Another extension in the same process can allow additional directories inside the sandbox. Add this package as a dependency, import the named export from the package entry point, and call it from the extension factory or a `session_start` hook:
+Another extension in the same process can allow additional directories inside the sandbox. Two transports exist: import this package, or emit an event on pi's shared event bus when a dependency is not an option.
+
+### Import the registry
+
+Add this package as a dependency, import the named export from the package entry point, and call it from the extension factory or a `session_start` hook:
 
 ```ts
 import { registerAllowedPath } from "pi-sandbox";
@@ -102,7 +106,28 @@ export default function (pi: ExtensionAPI): void {
 }
 ```
 
-Load order does not matter, and this works even though pi loads every extension through jiti with `moduleCache: false` (each extension gets its own copy of the module): the registry `Set` is stored on `globalThis` under a `Symbol.for` key, so all copies share one registry. Both enforcement layers read the registry lazily on every operation (`checkPath` per tool call, the OS profile per bash spawn), so a registered path takes effect from the next call onward. Registrations are read-write, cover the whole subtree, and are never written to the sandbox config file; the extension re-registers on every load. The path must be absolute or tilde; relative paths throw. The agent has no tool access to this API.
+Load order does not matter, and this works even though pi loads every extension through jiti with `moduleCache: false` (each extension gets its own copy of the module): the registry `Set` is stored on `globalThis` under a `Symbol.for` key, so all copies share one registry.
+
+### Emit an allow-path event
+
+Extensions that cannot add a dependency can emit a `pi-sandbox:allow-path` event on `pi.events` instead. Emit from a `session_start` handler: extension factories run in an unspecified order, so an emit straight from a factory can fire before this extension subscribes.
+
+```ts
+export default function (pi: ExtensionAPI): void {
+	pi.on("session_start", () => {
+		pi.events.emit("pi-sandbox:allow-path", { path: "~/shared-dir" });
+	});
+}
+```
+
+Contract for both transports:
+
+- The path must be absolute or tilde. Relative paths are rejected.
+- Both enforcement layers read the registry lazily on every operation (`checkPath` per tool call, the OS profile per bash spawn), so a registered path takes effect from the next call onward.
+- Registrations are read-write, cover the whole subtree, and are session-local. They are never written to the sandbox config file; extensions re-register on every load.
+- A malformed payload is dropped, and pi-sandbox shows a UI warning with the rejection reason.
+- Security: any in-process extension can expand the sandbox by emitting or calling. The event carries the same trust level as the import API; there is no extra gate.
+- The agent has no tool access to this API.
 
 ## Development
 

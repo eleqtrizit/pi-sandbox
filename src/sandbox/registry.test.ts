@@ -4,9 +4,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPath, isAllowedPath } from "./paths.js";
-import { registerAllowedPath, registeredAllowedPaths, validExtensionPaths } from "./registry.js";
+import {
+	ALLOW_PATH_EVENT,
+	handleAllowPathEvent,
+	registerAllowedPath,
+	registeredAllowedPaths,
+	subscribeAllowPathEvent,
+	validExtensionPaths,
+	type AllowPathEventBus,
+} from "./registry.js";
 import { buildBwrapArgs, buildLandlockArgs, buildSeatbeltProfile } from "./os-sandbox.js";
-import { extensionPaths, globalUnlockedPaths, resetState, sandboxState } from "./state.js";
+import { extensionPaths, globalUnlockedPaths, HOME, resetState, sandboxState } from "./state.js";
 
 // sandboxDir acts as the sandbox root; outsideDir sits next to it under the
 // repo cwd, so checkPath must block it until it is registered. (Not under
@@ -56,6 +64,96 @@ describe("registerAllowedPath", () => {
 		mkdirSync(child);
 		registerAllowedPath(child);
 		registerAllowedPath(outsideDir);
+		expect(registeredAllowedPaths()).toEqual([outsideDir]);
+	});
+});
+
+describe("allow-path event", () => {
+	it("registers an absolute path and returns the same path as direct registration", () => {
+		const directPath = registerAllowedPath(outsideDir);
+		resetState();
+		const result = handleAllowPathEvent({ path: outsideDir });
+		expect(result).toEqual({ ok: true, path: directPath });
+		expect(registeredAllowedPaths()).toEqual([directPath]);
+	});
+
+	it("expands a tilde path against HOME", () => {
+		const tildePath = "~/";
+		const result = handleAllowPathEvent({ path: tildePath });
+		expect(result).toEqual({ ok: true, path: HOME });
+		expect(registeredAllowedPaths()).toEqual([HOME]);
+	});
+
+	it.each([
+		["null", null],
+		["a non-object payload", "not an object"],
+		["a missing path", {}],
+		["a non-string path", { path: 42 }],
+		["an empty path", { path: "" }],
+		["a relative path", { path: "relative/dir" }],
+	])("rejects %s without changing the registry", (_label, payload) => {
+		const result = handleAllowPathEvent(payload);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toEqual(expect.any(String));
+		expect(registeredAllowedPaths()).toEqual([]);
+	});
+
+	it("subscribes on the literal event channel and routes results", () => {
+		const handlers = new Map<string, (data: unknown) => void>();
+		const channels: string[] = [];
+		const bus: AllowPathEventBus = {
+			on(channel, handler) {
+				channels.push(channel);
+				handlers.set(channel, handler);
+				return () => handlers.delete(channel);
+			},
+		};
+		const registered: string[] = [];
+		const rejected: string[] = [];
+		subscribeAllowPathEvent(bus, (path) => registered.push(path), (reason) => rejected.push(reason));
+
+		expect(ALLOW_PATH_EVENT).toBe("pi-sandbox:allow-path");
+		expect(channels).toEqual(["pi-sandbox:allow-path"]);
+		handlers.get("pi-sandbox:allow-path")?.({ path: outsideDir });
+		handlers.get("pi-sandbox:allow-path")?.({ path: "relative/dir" });
+		expect(registered).toEqual([outsideDir]);
+		expect(rejected).toHaveLength(1);
+		expect(rejected[0]).toMatch(/absolute or tilde/);
+	});
+
+	it("unsubscribes so later events do nothing", () => {
+		let handler: ((data: unknown) => void) | undefined;
+		const bus: AllowPathEventBus = {
+			on(_channel, listener) {
+				handler = listener;
+				return () => {
+					handler = undefined;
+				};
+			},
+		};
+		const registered: string[] = [];
+		const unsubscribe = subscribeAllowPathEvent(bus, (path) => registered.push(path), () => {});
+		handler?.({ path: outsideDir });
+		unsubscribe();
+		handler?.({ path: outsideDir });
+		expect(registered).toEqual([outsideDir]);
+	});
+
+	it("notifies on every duplicate event while registry storage stays deduplicated", () => {
+		let handler: ((data: unknown) => void) | undefined;
+		const bus: AllowPathEventBus = {
+			on(_channel, listener) {
+				handler = listener;
+				return () => {
+					handler = undefined;
+				};
+			},
+		};
+		const registered: string[] = [];
+		subscribeAllowPathEvent(bus, (path) => registered.push(path), () => {});
+		handler?.({ path: outsideDir });
+		handler?.({ path: outsideDir });
+		expect(registered).toEqual([outsideDir, outsideDir]);
 		expect(registeredAllowedPaths()).toEqual([outsideDir]);
 	});
 });
