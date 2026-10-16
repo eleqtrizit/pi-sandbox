@@ -6,9 +6,10 @@
  */
 
 import { type ExtensionAPI, type ExtensionContext, createBashTool, isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { allUnlockedPaths, blockedHistory, recordBlocked, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
+import { allUnlockedPaths, blockedHistory, extensionPaths, recordBlocked, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 import { isUnderRealPrefix, tryRealpath } from "./fs-utils.js";
 import { checkPath, unlockTargetFor } from "./paths.js";
+import { validExtensionPaths } from "./registry.js";
 import { collectSymlinkTargets } from "./symlinks.js";
 import { extractDeniedHomePaths } from "./denials.js";
 import { detectOsSandbox, type ProfileInput } from "./os-sandbox.js";
@@ -47,7 +48,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	function profileInputFor(cwd: string): ProfileInput {
 		return {
 			sandboxDir: cwd,
-			readWritePaths: [...symlinkTargets, ...allUnlockedPaths()],
+			readWritePaths: [...symlinkTargets, ...allUnlockedPaths(), ...validExtensionPaths()],
 		};
 	}
 
@@ -223,7 +224,7 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			const start = Math.max(0, blockedHistory.length - 20);
 			for (let i = blockedHistory.length - 1, pos = 1; i >= start; i--, pos++) {
 				const e = blockedHistory[i];
-				const tag = [...unlockedPaths].some((p) => isUnderRealPrefix(e.path, p)) ? " [unlocked]" : "";
+				const tag = [...allUnlockedPaths(), ...extensionPaths].some((p) => isUnderRealPrefix(e.path, p)) ? " [unlocked]" : "";
 				lines.push(`  [${pos}] ${displayPath(e.path)}  (${e.tool}, ${ageMs(e.timestamp)} ago, src: "${e.original}")${tag}`);
 			}
 			lines.push("Use /sandbox-unlock-last-path [n] to allow a path (default n=1, the newest).");

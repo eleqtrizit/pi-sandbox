@@ -79,6 +79,7 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | Module | Responsibility |
 |--------|----------------|
 | `state.ts` | Mutable sandbox state and the blocked-path history ring buffer |
+| `registry.ts` | `registerAllowedPath()`: lets other extensions allow extra directories |
 | `fs-utils.ts` | Realpath, tilde expansion, and prefix comparison helpers |
 | `symlinks.ts` | Symlink scanning (fd with a manual-walk fallback) for allowlisted targets |
 | `os-sandbox.ts` | Seatbelt profile generation, `sandbox-exec` wrapping, bubblewrap argument generation with an AppArmor-aware availability probe |
@@ -88,6 +89,20 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | `denials.ts` | Extracts denied `$HOME` paths from bash error output |
 | `display.ts` | Footer status line and startup banner |
 | `index.ts` | The sandboxed bash tool, `tool_call` interception, and slash commands |
+
+## Allowing extra directories from other extensions
+
+Another extension in the same process can allow additional directories inside the sandbox. Add this package as a dependency, import the named export from the package entry point, and call it from the extension factory or a `session_start` hook:
+
+```ts
+import { registerAllowedPath } from "pi-sandbox";
+
+export default function (pi: ExtensionAPI): void {
+	registerAllowedPath("~/shared-dir");
+}
+```
+
+Load order does not matter. Both enforcement layers read the registry lazily on every operation (`checkPath` per tool call, the OS profile per bash spawn), so a registered path takes effect from the next call onward. Registrations are read-write, cover the whole subtree, and are never written to the sandbox config file; the extension re-registers on every load. The path must be absolute or tilde; relative paths throw. The agent has no tool access to this API.
 
 ## Development
 

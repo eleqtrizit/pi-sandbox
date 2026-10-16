@@ -9,6 +9,11 @@
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import registerSandbox from "../src/sandbox/index.js";
+import { registerAllowedPath, registeredAllowedPaths } from "../src/sandbox/registry.js";
+
+// Named exports for consumer extensions: call registerAllowedPath() from the
+// extension factory or session_start to allow extra directories in the sandbox.
+export { registerAllowedPath, registeredAllowedPaths };
 
 export default function (pi: ExtensionAPI): void {
 	registerSandbox(pi);

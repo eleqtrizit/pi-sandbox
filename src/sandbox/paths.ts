@@ -7,6 +7,7 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { EXACT_ALLOWED_PATHS, PREFIX_ALLOWED_PATHS, homeAllowlist } from "./allowlist.js";
+import { validExtensionPaths } from "./registry.js";
 import { allUnlockedPaths, symlinkTargets } from "./state.js";
 import { expandTilde, isUnderPrefix, isUnderRealPrefix, realpathThroughExisting, tryRealpath } from "./fs-utils.js";
 
@@ -49,6 +50,15 @@ export function isAllowedPath(resolvedPath: string, access: PathAccess = "write"
 
 		// Paths explicitly unlocked by the user via /sandbox-unlock-last-path.
 		if (allUnlockedPaths().some((allowed) => isUnderRealPrefix(candidate, allowed))) {
+			return true;
+		}
+
+		// Dirs registered by other extensions via registerAllowedPath. Matched
+		// only against the realpath'd candidate, never the lexical one, so a
+		// symlink inside the registered root pointing outside does not pass.
+		// Roots swapped for symlinks after registration are dropped upstream
+		// (fail closed).
+		if (candidate === normalized && validExtensionPaths().some((allowed) => isUnderPrefix(candidate, allowed))) {
 			return true;
 		}
 

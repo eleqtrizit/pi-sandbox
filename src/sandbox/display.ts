@@ -2,7 +2,7 @@
  * Human-facing rendering for the sandbox: status line and startup banner.
  */
 
-import { HOME, allUnlockedPaths, blockedHistory, sandboxState, symlinkTargets } from "./state.js";
+import { HOME, allUnlockedPaths, blockedHistory, extensionPaths, sandboxState, symlinkTargets } from "./state.js";
 import { EXACT_ALLOWED_PATHS, PREFIX_ALLOWED_PATHS, homeAllowlist } from "./allowlist.js";
 import { relativeSafe } from "./fs-utils.js";
 import type { SandboxConfig } from "./config.js";
@@ -29,7 +29,7 @@ export function ageMs(ts: number): string {
 
 /** One-line sandbox summary for the footer status line. */
 export function statusLine(): string {
-	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${allUnlockedPaths().length} | blocked: ${blockedHistory.length}`;
+	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${allUnlockedPaths().length} | extension: ${extensionPaths.size} | blocked: ${blockedHistory.length}`;
 }
 
 /**
@@ -66,6 +66,14 @@ export function buildBanner(cwd: string, configPath: string | null, cfg: Sandbox
 	} else {
 		lines.push(`   Unlocked paths (${unlocked.length}):`);
 		for (const p of unlocked) {
+			lines.push(`     ${displayPath(p)}`);
+		}
+	}
+	if (extensionPaths.size === 0) {
+		lines.push("   Extension paths: (none)");
+	} else {
+		lines.push(`   Extension paths (${extensionPaths.size}):`);
+		for (const p of extensionPaths) {
 			lines.push(`     ${displayPath(p)}`);
 		}
 	}

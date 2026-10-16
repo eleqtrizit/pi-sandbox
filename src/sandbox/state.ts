@@ -70,6 +70,14 @@ export const unlockedPaths: Set<string> = new Set();
  */
 export const globalUnlockedPaths: Set<string> = new Set();
 
+/**
+ * Extra directories registered by other extensions via registerAllowedPath
+ * (src/sandbox/registry.ts). Realpath-resolved prefix-allowed roots, treated
+ * like unlockedPaths but never persisted to the sandbox config: extensions
+ * re-register on every load, so the registry is rebuilt per session.
+ */
+export const extensionPaths: Set<string> = new Set();
+
 /** Every unlocked path in effect: project-local plus global. */
 export function allUnlockedPaths(): string[] {
 	return [...new Set([...unlockedPaths, ...globalUnlockedPaths])];
@@ -104,4 +112,5 @@ export function resetState(): void {
 	blockedHistory.length = 0;
 	unlockedPaths.clear();
 	globalUnlockedPaths.clear();
+	extensionPaths.clear();
 }
