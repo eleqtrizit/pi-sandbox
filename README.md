@@ -102,7 +102,7 @@ export default function (pi: ExtensionAPI): void {
 }
 ```
 
-Load order does not matter. Both enforcement layers read the registry lazily on every operation (`checkPath` per tool call, the OS profile per bash spawn), so a registered path takes effect from the next call onward. Registrations are read-write, cover the whole subtree, and are never written to the sandbox config file; the extension re-registers on every load. The path must be absolute or tilde; relative paths throw. The agent has no tool access to this API.
+Load order does not matter, and this works even though pi loads every extension through jiti with `moduleCache: false` (each extension gets its own copy of the module): the registry `Set` is stored on `globalThis` under a `Symbol.for` key, so all copies share one registry. Both enforcement layers read the registry lazily on every operation (`checkPath` per tool call, the OS profile per bash spawn), so a registered path takes effect from the next call onward. Registrations are read-write, cover the whole subtree, and are never written to the sandbox config file; the extension re-registers on every load. The path must be absolute or tilde; relative paths throw. The agent has no tool access to this API.
 
 ## Development
 

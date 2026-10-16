@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	BLOCKED_HISTORY_MAX,
 	blockedHistory,
+	extensionPaths,
 	markSymlinkScan,
 	recordBlocked,
 	resetState,
@@ -58,5 +59,17 @@ describe("resetState", () => {
 		expect(symlinkTargets.size).toBe(0);
 		expect(unlockedPaths.size).toBe(0);
 		expect(blockedHistory).toHaveLength(0);
+	});
+});
+
+describe("extensionPaths sharing", () => {
+	it("shares one Set across fresh module copies, as with jiti moduleCache: false", async () => {
+		extensionPaths.add("/shared/dir");
+
+		vi.resetModules();
+		const copy2 = await import("./state.js");
+
+		expect(copy2.extensionPaths).toBe(extensionPaths);
+		expect(copy2.extensionPaths.has("/shared/dir")).toBe(true);
 	});
 });

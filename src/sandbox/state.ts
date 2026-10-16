@@ -75,8 +75,15 @@ export const globalUnlockedPaths: Set<string> = new Set();
  * (src/sandbox/registry.ts). Realpath-resolved prefix-allowed roots, treated
  * like unlockedPaths but never persisted to the sandbox config: extensions
  * re-register on every load, so the registry is rebuilt per session.
+ *
+ * pi loads every extension through jiti with moduleCache: false, so each
+ * extension importing this module gets its own copy of the Set. Storing the
+ * Set on globalThis under a Symbol.for key makes all copies share one
+ * registry, in any load order.
  */
-export const extensionPaths: Set<string> = new Set();
+const EXTENSION_PATHS_KEY = Symbol.for("pi-sandbox.extensionPaths");
+type GlobalWithPaths = typeof globalThis & { [EXTENSION_PATHS_KEY]?: Set<string> };
+export const extensionPaths: Set<string> = ((globalThis as GlobalWithPaths)[EXTENSION_PATHS_KEY] ??= new Set());
 
 /** Every unlocked path in effect: project-local plus global. */
 export function allUnlockedPaths(): string[] {
