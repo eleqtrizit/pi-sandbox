@@ -14,6 +14,7 @@ import { checkPath, unlockTargetFor } from "./paths.js";
 import { subscribeAllowPathEvent, validExtensionPaths } from "./registry.js";
 import { collectSymlinkTargets } from "./symlinks.js";
 import { extractDeniedHomePaths } from "./denials.js";
+import { appendJournalEntry, readJournal, removeJournalPath, type JournalEntry } from "./journal.js";
 import { detectOsSandbox, type ProfileInput } from "./os-sandbox.js";
 import {
 	CONFIG_BASENAME,
@@ -59,6 +60,20 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	}
 
 	const osSandbox = detectOsSandbox();
+
+	/**
+	 * Record a blocked path in the in-memory history and in the persistent
+	 * journal (~/.pi/agent/sandbox-blocked.jsonl) so it survives the session.
+	 */
+	function recordAndJournal(original: string, resolved: string, tool: string): void {
+		recordBlocked(original, resolved, tool, tryRealpath);
+		const entry: JournalEntry = { path: tryRealpath(resolved), original, tool, timestamp: Date.now() };
+		try {
+			appendJournalEntry(entry);
+		} catch {
+			// Journal write failures must not break the block itself.
+		}
+	}
 
 	// Subscribe to allow-path events from other pi extensions at factory time.
 	// All extension factories run before any session_start fires, so this
@@ -162,6 +177,22 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	});
 
 	/**
+	 * Add `target` to the unlocked paths. With `global` set, the path is saved
+	 * to the global config at once and reloaded; otherwise it is kept for this
+	 * session until /sandbox-save-config.
+	 * @throws Error when the global config cannot be read or written.
+	 */
+	function applyUnlock(target: string, global: boolean): void {
+		if (global) {
+			addGlobalUnlockedPath(target);
+			reloadGlobalConfig();
+		} else {
+			unlockedPaths.add(target);
+			symlinkTargets.add(target);
+		}
+	}
+
+	/**
 	 * Unlock the nth most recently blocked path. With `global` set, the path is
 	 * saved to the global config at once and reloaded; otherwise it is kept for
 	 * this session until /sandbox-save-config.
@@ -187,17 +218,11 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		// Directory blocks unlock the directory itself; file blocks unlock
 		// the parent directory so the whole subtree becomes reachable.
 		const target = unlockTargetFor(entry.path);
-		if (global) {
-			try {
-				addGlobalUnlockedPath(target);
-				reloadGlobalConfig();
-			} catch (err) {
-				ctx.ui.notify(`${command} failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-				return;
-			}
-		} else {
-			unlockedPaths.add(target);
-			symlinkTargets.add(target);
+		try {
+			applyUnlock(target, global);
+		} catch (err) {
+			ctx.ui.notify(`${command} failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+			return;
 		}
 		const unlockedLine = target === entry.path
 			? `🔓 Unlocked${global ? " globally" : ""}: ${displayPath(entry.path)}`
@@ -253,6 +278,81 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		},
 	});
 
+	// /sandbox-paths - pick a recently blocked path from the persistent journal and unblock it
+	pi.registerCommand("sandbox-paths", {
+		description: "Browse the last blocked paths (from ~/.pi/agent/sandbox-blocked.jsonl, newest first) with arrow keys and unblock one globally or locally",
+		handler: async (_args, ctx) => {
+			const entries = readJournal(100);
+			if (entries.length === 0) {
+				ctx.ui.notify("No blocked paths in the journal yet (/Users/arivera/.pi/agent/sandbox-blocked.jsonl).", "info");
+				return;
+			}
+			if (!ctx.hasUI) {
+				ctx.ui.notify("/sandbox-paths needs the interactive UI to show the picker", "warning");
+				return;
+			}
+
+			// Pages of 20, newest page first; index 0 = newest entry.
+			const newestFirst = [...entries].reverse();
+			const PAGE_SIZE = 20;
+			let pageIndex = 0;
+
+			let picked: number | undefined;
+			for (;;) {
+				const page = newestFirst.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
+				const options = page.map((e, i) => `[${pageIndex * PAGE_SIZE + i + 1}] ${displayPath(e.path)}  (${e.tool}, ${ageMs(e.timestamp)} ago)`);
+				if ((pageIndex + 1) * PAGE_SIZE < newestFirst.length) {
+					options.push(`▼ ${Math.min(PAGE_SIZE, newestFirst.length - (pageIndex + 1) * PAGE_SIZE)} older paths`);
+				}
+				const choice = await ctx.ui.select(`Blocked paths (page ${pageIndex + 1})`, options);
+				if (choice === undefined) {
+					return;
+				}
+				const listIndex = options.indexOf(choice);
+				if (listIndex === options.length - 1 && listIndex >= PAGE_SIZE) {
+					pageIndex++;
+					continue;
+				}
+				picked = pageIndex * PAGE_SIZE + listIndex;
+				break;
+			}
+
+			const entry = newestFirst[picked];
+			const scope = await ctx.ui.select(`Unblock ${displayPath(entry.path)}`, [
+				"Locally (this project only)",
+				"Globally (every project)",
+				"Cancel",
+			]);
+			if (scope === undefined || scope === "Cancel") {
+				return;
+			}
+			const global = scope === "Globally (every project)";
+			const target = unlockTargetFor(entry.path);
+			try {
+				applyUnlock(target, global);
+			} catch (err) {
+				ctx.ui.notify(`/sandbox-paths failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+				return;
+			}
+			try {
+				removeJournalPath(target);
+			} catch {
+				// Journal cleanup is best-effort.
+			}
+			ctx.ui.notify(
+				`🔓 Unlocked${global ? " globally" : ""}: ${displayPath(target)}\n` +
+				`   blocked by ${entry.tool}, src: "${entry.original}"`,
+				"info",
+			);
+			pi.sendMessage({
+				customType: "sandbox-paths",
+				content: `The sandbox has unlocked the path "${displayPath(target)}". Access to this directory and everything under it is now allowed.`,
+				display: false,
+			}, { deliverAs: "followUp", triggerTurn: true });
+			refreshStatus(ctx);
+		},
+	});
+
 	// The kernel denies bash file access without telling pi, so read the denied
 	// paths back out of the command's error output for /sandbox-unlock-last-path.
 	pi.on("tool_result", async (event) => {
@@ -261,7 +361,10 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		}
 		const text = event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 		for (const path of extractDeniedHomePaths(text)) {
-			recordBlocked(path, path, "bash", tryRealpath);
+			recordAndJournal(path, path, "bash");
+		}
+		if (currentCtx) {
+			refreshStatus(currentCtx);
 		}
 		return undefined;
 	});
@@ -290,10 +393,11 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			const result = checkPath(path, ctx.cwd, event.toolName === "read" ? "read" : "write");
 
 			if (!result.allowed) {
-				recordBlocked(path, result.resolved ?? path, event.toolName, tryRealpath);
+				recordAndJournal(path, result.resolved ?? path, event.toolName);
 				if (ctx.hasUI) {
 					ctx.ui.notify(`Sandbox blocked: ${event.toolName} to "${path}"`, "warning");
 				}
+				refreshStatus(ctx);
 				return { block: true, reason: result.reason };
 			}
 			return undefined;
@@ -305,10 +409,11 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			if (target) {
 				const result = checkPath(target, ctx.cwd, "read");
 				if (!result.allowed) {
-					recordBlocked(target, result.resolved ?? target, event.toolName, tryRealpath);
+					recordAndJournal(target, result.resolved ?? target, event.toolName);
 					if (ctx.hasUI) {
 						ctx.ui.notify(`Sandbox blocked: ${event.toolName} path "${target}"`, "warning");
 					}
+					refreshStatus(ctx);
 					return { block: true, reason: result.reason };
 				}
 			}

@@ -29,7 +29,9 @@ export function ageMs(ts: number): string {
 
 /** One-line sandbox summary for the footer status line. */
 export function statusLine(): string {
-	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${allUnlockedPaths().length} | extension: ${extensionPaths.size} | blocked: ${blockedHistory.length}`;
+	const last = blockedHistory.length > 0 ? blockedHistory[blockedHistory.length - 1] : null;
+	const lastLine = last ? ` | last blocked: ${displayPath(last.path)}` : "";
+	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${allUnlockedPaths().length} | extension: ${extensionPaths.size} | blocked: ${blockedHistory.length}${lastLine}`;
 }
 
 /**

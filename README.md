@@ -69,8 +69,9 @@ A global config with the same basename lives in `~/.pi/agent/`. It stores only `
 | `/sandbox-unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/sandbox-unlock-last-path 2`). Blocked files unlock their parent directory. Bash denials are read back from the command's error output (lines such as "Operation not permitted" that name a path under `$HOME`). Sends the unlocked directory to the agent. |
 | `/sandbox-unlock-last-path-globally` | Like `/sandbox-unlock-last-path`, but saves the directory to the global config in `~/.pi/agent/` at once, reloads it, and applies it to every project. |
 | `/sandbox-blocked` | List the 20 most recently blocked paths with their `/sandbox-unlock-last-path` index. |
+| `/sandbox-paths` | Browse the last blocked paths from `~/.pi/agent/sandbox-blocked.jsonl` (newest 20 first, arrow keys to page through up to 100) and unblock one locally or globally. Unlocking removes the path from the journal. |
 
-The footer status line always shows the current state: lock state, symlink target count, unlocked path count, and blocked attempt count.
+The footer status line always shows the current state: lock state, symlink target count, unlocked path count, blocked attempt count, and the most recently blocked path.
 
 ## Source layout
 
@@ -87,6 +88,7 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | `paths.ts` | Allow lists and `checkPath` for the in-process tools |
 | `config.ts` | Project config load, save, apply, and snapshot; global config load, add, and reload |
 | `denials.ts` | Extracts denied `$HOME` paths from bash error output |
+| `journal.ts` | Append-only JSONL journal of blocked paths at `~/.pi/agent/sandbox-blocked.jsonl`, with dedupe on read and periodic compaction |
 | `display.ts` | Footer status line and startup banner |
 | `index.ts` | The sandboxed bash tool, `tool_call` interception, and slash commands |
 

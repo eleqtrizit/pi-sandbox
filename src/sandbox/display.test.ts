@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBanner, statusLine } from "./display.js";
 import { registerAllowedPath } from "./registry.js";
-import { extensionPaths, resetState } from "./state.js";
+import { blockedHistory, extensionPaths, resetState } from "./state.js";
 
 const tempDirs: string[] = [];
 
@@ -28,6 +28,19 @@ describe("statusLine", () => {
 		expect(statusLine()).toContain("extension: 1");
 		resetState();
 		expect(extensionPaths.size).toBe(0);
+	});
+
+	it("shows the last blocked path when one is recorded", () => {
+		resetState();
+		expect(statusLine()).not.toContain("last blocked");
+		blockedHistory.push({
+			path: "/home/u/proj/secret",
+			original: "~/proj/secret",
+			tool: "read",
+			timestamp: Date.now(),
+		});
+		expect(statusLine()).toContain("last blocked: /home/u/proj/secret");
+		resetState();
 	});
 });
 
