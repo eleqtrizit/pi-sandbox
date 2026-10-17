@@ -12,7 +12,30 @@ describe("homeAllowlist", () => {
 	});
 
 	it("keeps pi config and caches writable", () => {
-		expect(homePaths(true, "/h")).toEqual(expect.arrayContaining(["/h/.pi", "/h/.agents", "/h/.cache", "/h/.npm"]));
+		expect(homePaths(true, "/h")).toEqual(
+			expect.arrayContaining([
+				"/h/.pi",
+				"/h/.agents",
+				"/h/.cache",
+				"/h/.npm",
+				"/h/Library/Caches",
+				"/h/Library/Logs",
+				"/h/.nvm",
+				"/h/.pyenv",
+				"/h/.bun",
+				"/h/.deno",
+				"/h/.cargo/registry",
+				"/h/.rustup",
+				"/h/.pnpm-store",
+			]),
+		);
+	});
+
+	it("keeps macOS Library config dirs read-only", () => {
+		expect(homePaths(false, "/h")).toContain("/h/Library/Preferences");
+		expect(homePaths(false, "/h")).toContain("/h/Library/Application Support");
+		expect(homePaths(true, "/h")).not.toContain("/h/Library/Preferences");
+		expect(homePaths(true, "/h")).not.toContain("/h/Library/Application Support");
 	});
 
 	it("never lists secrets or all of ~/.local/share", () => {
