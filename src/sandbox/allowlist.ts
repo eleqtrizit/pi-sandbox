@@ -84,6 +84,14 @@ export const EXACT_ALLOWED_PATHS: ReadonlySet<string> = new Set(
  * OS layers leave everything outside $HOME open). `/var/folders` is the macOS
  * per-user temp area, symlinked to /private/var/folders.
  */
-export const PREFIX_ALLOWED_PATHS: readonly string[] = ["/dev/fd", "/proc/self/fd", "/tmp", "/var/folders"].map((p) =>
-	resolve(p),
-);
+export const PREFIX_ALLOWED_PATHS: readonly string[] = [
+	"/dev/fd",
+	"/proc/self/fd",
+	"/tmp",
+	"/var/folders",
+	"/bin",
+	"/sbin",
+	"/usr/bin",
+	"/usr/sbin",
+	"/usr/local/bin",
+].map((p) => resolve(p));

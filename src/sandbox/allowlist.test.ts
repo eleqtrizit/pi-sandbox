@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { homeAllowlist, homePaths } from "./allowlist.js";
+import { homeAllowlist, homePaths, PREFIX_ALLOWED_PATHS } from "./allowlist.js";
 
 describe("homeAllowlist", () => {
 	it("roots every entry under the given home", () => {
@@ -53,5 +53,13 @@ describe("homeAllowlist", () => {
 	it("has no duplicate paths", () => {
 		const all = homeAllowlist("/h").map((e) => e.path);
 		expect(new Set(all).size).toBe(all.length);
+	});
+});
+
+describe("PREFIX_ALLOWED_PATHS", () => {
+	it("allows system executable directories", () => {
+		for (const dir of ["/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"]) {
+			expect(PREFIX_ALLOWED_PATHS).toContain(dir);
+		}
 	});
 });
