@@ -45,6 +45,12 @@ Invariants:
   read-only and caches (`~/.cache`, `~/.npm`) read-write, and PIDs are unshared
   so `/proc/<pid>/root` cannot reach the real home. A blocked path surfaces as
   ENOENT, not EPERM — tests must assert non-zero exit, not a specific error.
+  **Exception (macOS):** the kernel refuses to exec setuid binaries from any
+  `sandbox-exec` process, even under a bare `(allow default)` profile, so
+  `/bin/ps` and `/usr/bin/top` fail with `Operation not permitted`. No profile
+  rule can re-allow them. This is a platform limit, not a project policy.
+  Non-setuid tools still work (`pgrep`, `pkill`, `sysctl -n vm.loadavg`).
+  Verify with `sandbox-exec -p '(version 1)(allow default)' /bin/ps`.
 - **The config file is a trust anchor.** Only slash commands may write it; any
   tool input mentioning it is blocked.
 - The test suite includes live enforcement tests: seatbelt runs only when
