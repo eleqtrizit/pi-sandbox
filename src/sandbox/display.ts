@@ -27,11 +27,14 @@ export function ageMs(ts: number): string {
 	return `${Math.round(ms / 3_600_000)}h`;
 }
 
-/** One-line sandbox summary for the footer status line. */
+/** One-line sandbox summary for the footer status line. Disabled state is
+ * rendered in red by the caller; this returns plain text. */
 export function statusLine(): string {
-	const last = blockedHistory.length > 0 ? blockedHistory[blockedHistory.length - 1] : null;
-	const lastLine = last ? ` | last blocked: ${displayPath(last.path)}` : "";
-	return `🛡 sandbox: ${sandboxState.locked ? "locked" : "unlocked"} | symlink targets: ${symlinkTargets.size} | unlocked: ${allUnlockedPaths().length} | extension: ${extensionPaths.size} | blocked: ${blockedHistory.length}${lastLine}`;
+	if (!sandboxState.locked) {
+		return "🛡 sandbox DISABLED";
+	}
+	const last = blockedHistory[blockedHistory.length - 1];
+	return last ? `🛡 sandbox enabled. ${displayPath(last.path)} blocked` : "🛡 sandbox enabled.";
 }
 
 /**

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBanner, statusLine } from "./display.js";
 import { registerAllowedPath } from "./registry.js";
-import { blockedHistory, extensionPaths, resetState } from "./state.js";
+import { blockedHistory, resetState, sandboxState } from "./state.js";
 
 const tempDirs: string[] = [];
 
@@ -21,25 +21,27 @@ function makeTempDir(prefix: string): string {
 }
 
 describe("statusLine", () => {
-	it("reports the extension path count", () => {
+	it("shows enabled with no blocked suffix when nothing is blocked", () => {
 		resetState();
-		expect(statusLine()).toContain("extension: 0");
-		registerAllowedPath(makeTempDir("sbx-display-"));
-		expect(statusLine()).toContain("extension: 1");
-		resetState();
-		expect(extensionPaths.size).toBe(0);
+		expect(statusLine()).toBe("🛡 sandbox enabled.");
 	});
 
 	it("shows the last blocked path when one is recorded", () => {
 		resetState();
-		expect(statusLine()).not.toContain("last blocked");
 		blockedHistory.push({
 			path: "/home/u/proj/secret",
 			original: "~/proj/secret",
 			tool: "read",
 			timestamp: Date.now(),
 		});
-		expect(statusLine()).toContain("last blocked: /home/u/proj/secret");
+		expect(statusLine()).toBe("🛡 sandbox enabled. /home/u/proj/secret blocked");
+		resetState();
+	});
+
+	it("shows DISABLED when unlocked", () => {
+		resetState();
+		sandboxState.locked = false;
+		expect(statusLine()).toBe("🛡 sandbox DISABLED");
 		resetState();
 	});
 });

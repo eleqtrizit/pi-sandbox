@@ -47,7 +47,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	/** Refresh the footer status line with the current sandbox state. */
 	function refreshStatus(ctx: ExtensionContext): void {
 		if (ctx.hasUI) {
-			ctx.ui.setStatus("sandbox", statusLine());
+			const line = statusLine();
+			ctx.ui.setStatus("sandbox", sandboxState.locked ? line : ctx.ui.theme.fg("error", line));
 		}
 	}
 

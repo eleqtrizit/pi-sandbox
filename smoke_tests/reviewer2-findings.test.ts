@@ -84,7 +84,7 @@ describe("Reviewer2 smoke tests (post-fix)", () => {
 		mkdirSync(extraDir, { recursive: true });
 		registerAllowedPath(extraDir);
 
-		expect(statusLine()).toContain("extension: 1");
+		expect(statusLine()).toBe("🛡 sandbox enabled.");
 		const banner = buildBanner(workDir, null, null);
 		expect(banner).toContain("Extension paths (1):");
 		expect(banner).toContain(displayPath(extraDir));
