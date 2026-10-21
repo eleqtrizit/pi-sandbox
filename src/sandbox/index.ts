@@ -29,6 +29,17 @@ import {
 } from "./config.js";
 import { ageMs, buildBanner, displayPath, statusLine } from "./display.js";
 
+/** Sandbox-root paragraph prepended to the system prompt so the agent knows its confinement. */
+export function sandboxSystemPromptAddendum(sandboxRoot: string): string {
+	return (
+		`At session start, you are sandboxed into ${sandboxRoot}. ` +
+		"Directories referenced outside this path may exist, but you cannot see them. " +
+		"IF the user directs you to a path outside of your sandbox, stop and ask the user to use " +
+		"/sandbox-unlock or /sandbox-unlock-last-path. " +
+		"You will get prompts that tell you of updated access to other directories."
+	);
+}
+
 /** Load the saved config (if any) and apply it to the live sandbox state. */
 function restoreOnSessionStart(ctx: ExtensionContext): { configPath: string | null; cfg: ReturnType<typeof loadSandboxConfigFromPath> } {
 	const configPath = existingConfigPath(ctx.cwd);
@@ -133,6 +144,14 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			ctx.ui.notify(buildBanner(ctx.cwd, configPath, cfg), "info");
 		}
 	});
+
+	// Prepend the sandbox confinement paragraph to the system prompt for every
+	// run. Recomputed from the fresh prompt each run, so unlock prompts (sent as
+	// user messages) remain the channel for access updates; the static text never
+	// changes after start.
+	pi.on("before_agent_start", async (event) => ({
+		systemPrompt: `${sandboxSystemPromptAddendum(process.cwd())}\n\n${event.systemPrompt}`,
+	}));
 
 	// /sandbox-unlock - disables all sandbox checks
 	pi.registerCommand("sandbox-unlock", {
