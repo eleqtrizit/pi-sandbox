@@ -232,7 +232,11 @@ describe("UnblockPicker", () => {
 		expect(lines.length).toBeGreaterThan(5);
 		const widths = new Set(lines.map((l) => visibleWidth(l)));
 		expect(widths.size).toBe(1);
-		const text = lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		const raw = lines.join("\n");
+		// Section headers are bright green, like the hint keys.
+		expect(raw).toContain("\x1b[1;92mUnlocked globally (0)\x1b[22;39m");
+		expect(raw).toContain("\x1b[1;92mBlocked paths (10 most recent) (1)\x1b[22;39m");
+		const text = raw.replace(/\x1b\[[0-9;]*m/g, "");
 		expect(text).toContain("Unlocked globally (0)");
 		expect(text).toContain("Unlocked in repo config (1)");
 		expect(text).toContain("Blocked paths (10 most recent) (1)");

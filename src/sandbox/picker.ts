@@ -294,7 +294,7 @@ export class UnblockPicker implements Focusable {
 		const visibleRows = this.rows.slice(this.top, this.top + MAX_VISIBLE_ROWS);
 		for (const { section, title } of sections) {
 			const sectionRows = this.rows.filter((r) => r.section === section);
-			lines.push(row(` ${th.fg("dim", `${title} (${sectionRows.length})`)}`));
+			lines.push(row(` ${brightGreen(`${title} (${sectionRows.length})`)}`));
 			if (sectionRows.length === 0) {
 				lines.push(row(`   ${th.fg("dim", "(none)")}`));
 				continue;
