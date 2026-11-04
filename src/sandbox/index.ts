@@ -152,6 +152,52 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		systemPrompt: `${sandboxSystemPromptAddendum(process.cwd())}\n\n${event.systemPrompt}`,
 	}));
 
+	// /sandbox-unblock-paths - the single path-access picker: browse globally
+	// unlocked, repo-config unlocked, and the 10 most recently blocked paths,
+	// mark entries to unblock as t (session), r (repo config), or g (global
+	// config); Enter applies and saves, Escape cancels.
+	pi.registerCommand("sandbox-unblock-paths", {
+		description: "Browse blocked and unlocked paths; mark entries to unblock (t = this session, r = repo config, g = global config). Enter applies and saves; Escape cancels",
+		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("/sandbox-unblock-paths needs the interactive UI to show the picker.", "warning");
+				return;
+			}
+			const rows = buildPickerRows({
+				journal: readJournal(100),
+				history: blockedHistory,
+				alreadyUnlocked: [...allUnlockedPaths(), ...validExtensionPaths()],
+				repoPaths: [...unlockedPaths],
+				globalPaths: [...globalUnlockedPaths],
+			});
+			if (rows.length === 0) {
+				ctx.ui.notify("Nothing to show: no blocked, repo-unlocked, or globally unlocked paths yet.", "info");
+				return;
+			}
+			const plan = await ctx.ui.custom<UnlockPlan | undefined>(
+				(_tui, theme, _keybindings, done) => new UnblockPicker(theme, done, rows),
+				{ overlay: true },
+			);
+			if (plan === undefined) {
+				// Escape: marks discarded, nothing saved.
+				ctx.ui.notify("Sandbox picker cancelled — nothing changed.", "info");
+				return;
+			}
+			const { lines, hadError, applied } = applyUnlockPlan(ctx.cwd, plan);
+			ctx.ui.notify(lines.join("\n"), hadError ? "error" : "info");
+			if (applied.length > 0) {
+				pi.sendMessage({
+					customType: "sandbox-paths",
+					content:
+						`The sandbox has unlocked the following directories; everything under them is now allowed: ` +
+						applied.map((p) => displayPath(p)).join(", "),
+					display: false,
+				}, { deliverAs: "followUp", triggerTurn: true });
+			}
+			refreshStatus(ctx);
+		},
+	});
+
 	// /sandbox-unlock - disables all sandbox checks; a picker decides whether
 	// the unlock is temporary (session only, never written to any config) or
 	// permanent (saved to the project config at once).
@@ -293,52 +339,6 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 
 		return { lines, hadError, applied };
 	}
-
-	// /sandbox-unblock-paths - the single path-access picker: browse globally
-	// unlocked, repo-config unlocked, and the 10 most recently blocked paths,
-	// mark entries to unblock as t (session), r (repo config), or g (global
-	// config); Enter applies and saves, Escape cancels.
-	pi.registerCommand("sandbox-unblock-paths", {
-		description: "Browse blocked and unlocked paths; mark entries to unblock (t = this session, r = repo config, g = global config). Enter applies and saves; Escape cancels",
-		handler: async (_args, ctx) => {
-			if (!ctx.hasUI) {
-				ctx.ui.notify("/sandbox-unblock-paths needs the interactive UI to show the picker.", "warning");
-				return;
-			}
-			const rows = buildPickerRows({
-				journal: readJournal(100),
-				history: blockedHistory,
-				alreadyUnlocked: [...allUnlockedPaths(), ...validExtensionPaths()],
-				repoPaths: [...unlockedPaths],
-				globalPaths: [...globalUnlockedPaths],
-			});
-			if (rows.length === 0) {
-				ctx.ui.notify("Nothing to show: no blocked, repo-unlocked, or globally unlocked paths yet.", "info");
-				return;
-			}
-			const plan = await ctx.ui.custom<UnlockPlan | undefined>(
-				(_tui, theme, _keybindings, done) => new UnblockPicker(theme, done, rows),
-				{ overlay: true },
-			);
-			if (plan === undefined) {
-				// Escape: marks discarded, nothing saved.
-				ctx.ui.notify("Sandbox picker cancelled — nothing changed.", "info");
-				return;
-			}
-			const { lines, hadError, applied } = applyUnlockPlan(ctx.cwd, plan);
-			ctx.ui.notify(lines.join("\n"), hadError ? "error" : "info");
-			if (applied.length > 0) {
-				pi.sendMessage({
-					customType: "sandbox-paths",
-					content:
-						`The sandbox has unlocked the following directories; everything under them is now allowed: ` +
-						applied.map((p) => displayPath(p)).join(", "),
-					display: false,
-				}, { deliverAs: "followUp", triggerTurn: true });
-			}
-			refreshStatus(ctx);
-		},
-	});
 
 	// The kernel denies bash file access without telling pi, so read the denied
 	// paths back out of the command's error output for /sandbox-unblock-paths.
