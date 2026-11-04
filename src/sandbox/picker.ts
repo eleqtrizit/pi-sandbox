@@ -6,7 +6,7 @@
  * (merged from the persistent journal and the in-memory history). The user
  * moves with the arrow keys,
  * marks blocked rows with t (temporary, this session), r (repo config), or
- * g (global config), and exits with Enter, which applies the marks and saves
+ * g (global config), clears a mark with space, and exits with Enter, which applies the marks and saves
  * the sandbox config automatically. Escape discards the marks.
  *
  * Row building and plan extraction are pure functions so tests can cover the
@@ -144,8 +144,51 @@ export function planFromMarks(rows: PickerRow[], marks: ReadonlyMap<string, Unlo
 /** Maximum rows rendered at once; older rows scroll into view. */
 const MAX_VISIBLE_ROWS = 18;
 
-/** Key for the mark legend and the picker title. */
-const HINT = "t session · r repo · g global · ↑↓ move · enter save & exit · esc cancel";
+/** One key in the picker hint: the key name, its action, and the separator printed after it. */
+interface HintSegment {
+	key: string;
+	label: string;
+	separator: string;
+}
+
+/** Keys shown in the picker hint, in display order. */
+const HINT_SEGMENTS: readonly HintSegment[] = [
+	{ key: "t", label: " = unlock for session", separator: ", " },
+	{ key: "r", label: " = perm unlock for repo", separator: ", " },
+	{ key: "g", label: " = perm unlock globally", separator: ", " },
+	{ key: "space", label: " = clear", separator: " · " },
+	{ key: "↑↓", label: " move", separator: " · " },
+	{ key: "enter", label: " save & exit", separator: " · " },
+	{ key: "esc", label: " cancel", separator: "" },
+];
+
+/** Prefix of the first hint line. */
+const HINT_PREFIX = "Press ";
+
+/** Bold bright green (ANSI 92), used for key names in the hint. */
+const brightGreen = (s: string): string => `\x1b[1;92m${s}\x1b[22;39m`;
+
+/**
+ * Build the hint lines: key names in bright green, labels dimmed, wrapped at
+ * segment boundaries so no line exceeds `maxWidth` visible columns.
+ */
+export function hintLines(theme: Theme, maxWidth: number): string[] {
+	const lines: string[] = [];
+	let line = theme.fg("dim", HINT_PREFIX);
+	let lineWidth = visibleWidth(HINT_PREFIX);
+	for (const { key, label, separator } of HINT_SEGMENTS) {
+		const width = visibleWidth(`${key}${label}${separator}`);
+		if (lineWidth > 0 && lineWidth + width > maxWidth) {
+			lines.push(line);
+			line = "";
+			lineWidth = 0;
+		}
+		line += `${brightGreen(key)}${theme.fg("dim", `${label}${separator}`)}`;
+		lineWidth += width;
+	}
+	lines.push(line);
+	return lines;
+}
 
 /**
  * Overlay component for /sandbox-unblock-paths. Not constructed directly by
@@ -200,6 +243,10 @@ export class UnblockPicker implements Focusable {
 		if (row?.section !== "blocked") {
 			return;
 		}
+		if (matchesKey(data, "space")) {
+			this.marks.delete(row.target);
+			return;
+		}
 		for (const [key, scope] of SCOPE_KEYS) {
 			if (matchesKey(data, key)) {
 				if (this.marks.get(row.target) === scope) {
@@ -226,7 +273,9 @@ export class UnblockPicker implements Focusable {
 
 		lines.push(th.fg("border", `╭${"─".repeat(innerW)}╮`));
 		lines.push(row(` ${th.fg("accent", "🛡 Sandbox paths")}`));
-		lines.push(row(` ${th.fg("dim", HINT)}`));
+		for (const hint of hintLines(th, innerW - 3)) {
+			lines.push(row(`  ${hint}`));
+		}
 		lines.push(row(""));
 
 		const sections: Array<{ section: PickerRow["section"]; title: string }> = [
