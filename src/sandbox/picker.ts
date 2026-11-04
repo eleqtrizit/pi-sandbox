@@ -123,7 +123,11 @@ export function buildPickerRows(sources: PickerSources): PickerRow[] {
 	];
 }
 
-/** Extract the unlock plan from the current marks, preserving row order and dropping duplicates. */
+/**
+ * Extract the unlock plan from the current marks (keyed by blocked row path),
+ * preserving row order and dropping duplicate unlock targets: several marked
+ * files in one directory yield a single unlock of that directory.
+ */
 export function planFromMarks(rows: PickerRow[], marks: ReadonlyMap<string, UnlockScope>): UnlockPlan {
 	const plan: UnlockPlan = { temporary: [], repo: [], global: [] };
 	const seen = new Set<string>();
@@ -131,7 +135,7 @@ export function planFromMarks(rows: PickerRow[], marks: ReadonlyMap<string, Unlo
 		if (row.section !== "blocked") {
 			continue;
 		}
-		const scope = marks.get(row.target);
+		const scope = marks.get(row.path);
 		if (scope === undefined || seen.has(row.target)) {
 			continue;
 		}
@@ -202,6 +206,7 @@ export class UnblockPicker implements Focusable {
 	private selected = 0;
 	/** Index of the first visible row; the window follows the selection. */
 	private top = 0;
+	/** Marks keyed by blocked row path, so a keypress tags exactly one row. */
 	private marks = new Map<string, UnlockScope>();
 
 	/**
@@ -215,8 +220,10 @@ export class UnblockPicker implements Focusable {
 		private done: (result: UnlockPlan | undefined) => void,
 		private rows: PickerRow[],
 	) {
+		// Row content is cursor + mark tag + path; 76 is the floor that still
+		// fits the longest legend line.
 		const longest = this.rows.reduce((m, r) => Math.max(m, visibleWidth(displayPath(r.path))), 24);
-		this.width = Math.min(116, Math.max(64, longest + 52));
+		this.width = Math.min(116, Math.max(76, longest + 10));
 	}
 
 	/** No cached rendering state; re-render always reads the live marks. */
@@ -244,15 +251,15 @@ export class UnblockPicker implements Focusable {
 			return;
 		}
 		if (matchesKey(data, "space")) {
-			this.marks.delete(row.target);
+			this.marks.delete(row.path);
 			return;
 		}
 		for (const [key, scope] of SCOPE_KEYS) {
 			if (matchesKey(data, key)) {
-				if (this.marks.get(row.target) === scope) {
-					this.marks.delete(row.target);
+				if (this.marks.get(row.path) === scope) {
+					this.marks.delete(row.path);
 				} else {
-					this.marks.set(row.target, scope);
+					this.marks.set(row.path, scope);
 				}
 				return;
 			}
@@ -321,7 +328,7 @@ export class UnblockPicker implements Focusable {
 		return `Marked ${total} path(s): ${counts.temporary} session, ${counts.repo} repo, ${counts.global} global. Enter applies and saves.`;
 	}
 
-	/** Render one row: cursor, path, meta, and mark tag, all plain-dimensioned. */
+	/** Render one row: cursor, mark tag in front of the path. */
 	private renderRow(r: PickerRow): string {
 		const th = this.theme;
 		const index = this.rows.indexOf(r);
@@ -329,11 +336,10 @@ export class UnblockPicker implements Focusable {
 		if (r.section !== "blocked") {
 			return ` ${cursor} ${th.fg("success", "✓")} ${th.fg("dim", displayPath(r.path))}`;
 		}
-		const mark = this.marks.get(r.target);
-		const meta = fit(`(${r.tool}, ${ageMs(r.timestamp)} ago)`, this.width - visibleWidth(displayPath(r.path)) - 12);
-		const metaText = mark === undefined ? th.fg("dim", meta) : th.fg("warning", meta);
-		const markText = mark === undefined ? "" : ` ${th.fg("warning", `[${mark === "temporary" ? "t" : mark === "repo" ? "r" : "g"}]`)}`;
-		return ` ${cursor} ${displayPath(r.path)}  ${metaText}${markText}`;
+		const mark = this.marks.get(r.path);
+		// Padded so marked and unmarked paths stay aligned.
+		const tag = mark === undefined ? "    " : `${th.fg("warning", `[${mark === "temporary" ? "t" : mark === "repo" ? "r" : "g"}]`)} `;
+		return ` ${cursor} ${tag}${displayPath(r.path)}`;
 	}
 
 	/** Move the selection by delta, keeping it inside the rows and the window. */
@@ -348,12 +354,4 @@ export class UnblockPicker implements Focusable {
 			this.top = this.selected - MAX_VISIBLE_ROWS + 1;
 		}
 	}
-}
-
-/** Truncate a plain (unstyled) string to a visible width, appending an ellipsis when it was cut. */
-function fit(s: string, w: number): string {
-	if (w <= 1) {
-		return w <= 0 ? "" : "…";
-	}
-	return visibleWidth(s) <= w ? s : `${s.slice(0, w - 1)}…`;
 }

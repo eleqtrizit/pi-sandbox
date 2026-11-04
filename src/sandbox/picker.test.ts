@@ -5,7 +5,7 @@
  * pure functions carry the behavior.
  */
 
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -129,7 +129,7 @@ describe("planFromMarks", () => {
 	it("groups marks by scope in row order and skips unmarked or unlocked-section rows", () => {
 		const marks = new Map<string, UnlockScope>([
 			["/one", "temporary"],
-			["/two", "repo"],
+			["/two/file", "repo"],
 			["/s", "global"], // repo rows are never marked by the component
 		]);
 		expect(planFromMarks(rows, marks)).toEqual<UnlockPlan>({
@@ -139,11 +139,12 @@ describe("planFromMarks", () => {
 		});
 	});
 
-	it("dedupes targets that several blocked rows share", () => {
+	it("dedupes unlock targets that several marked rows share", () => {
+		// /two/file and /other/file both unlock /two; only one is marked.
 		const plan = planFromMarks(
 			rows,
 			new Map([
-				["/two", "global"],
+				["/two/file", "global"],
 				["/one", "temporary"],
 			]),
 		);
@@ -248,6 +249,25 @@ describe("UnblockPicker", () => {
 		p.handleInput(" ");
 		p.handleInput("\r");
 		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+	});
+
+	it("marks only the pressed row, not siblings sharing its unlock target", () => {
+		const root = mkdtempSync(join(tmpdir(), "picker-sib-"));
+		const one = join(root, "one.txt");
+		const two = join(root, "two.txt");
+		writeFileSync(one, "x");
+		writeFileSync(two, "x");
+		const rows = buildPickerRows({ ...emptySources, history: [h(one, 2), h(two, 1)] });
+		let result: UnlockPlan | undefined | "unset" = "unset";
+		const p = picker(rows, (r) => (result = r));
+		p.handleInput("g"); // newest row (one.txt); both rows target `root`
+		const text = p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		// Exactly one row shows the tag, in front of its path.
+		expect(text.match(/\[g\]/g)).toHaveLength(1);
+		expect(text).toContain("[g] ");
+		p.handleInput("\r");
+		// The plan still unlocks the shared parent once.
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [root] });
 	});
 });
 
