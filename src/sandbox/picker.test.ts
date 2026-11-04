@@ -240,7 +240,7 @@ describe("UnblockPicker", () => {
 		expect(text).toContain("Unlocked globally (0)");
 		expect(text).toContain("Unlocked in repo config (1)");
 		expect(text).toContain("Blocked paths (10 most recent) (1)");
-		expect(text).toContain("Press t = unlock for session, r = perm unlock for repo");
+		expect(text).toContain("Press t = unlock for session · r = perm unlock for repo · g = perm unlock globally · space = clear");
 		expect(text).toContain("esc cancel");
 	});
 
@@ -276,30 +276,28 @@ describe("UnblockPicker", () => {
 });
 
 describe("hintLines", () => {
-	const plain = (lines: string[]) => lines.join(" ").replace(/\x1b\[[0-9;]*m/g, "");
+	const plain = (lines: string[]) => lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
 
-	it("lists every key with its action in one line when the box is wide enough", () => {
-		const lines = hintLines(stubTheme, 200);
-		expect(lines).toHaveLength(1);
-		expect(plain(lines)).toBe(
-			"Press t = unlock for session, r = perm unlock for repo, g = perm unlock globally, space = clear · " +
-				"↑↓ move · enter save & exit · esc cancel",
-		);
+	it("renders two rows: marking keys, then movement keys", () => {
+		expect(plain(hintLines(stubTheme))).toEqual([
+			"Press t = unlock for session · r = perm unlock for repo · g = perm unlock globally · space = clear",
+			"↑↓ move · enter save & exit · esc cancel",
+		]);
 	});
 
 	it("colors each key bright green", () => {
-		const text = hintLines(stubTheme, 200).join("");
+		const text = hintLines(stubTheme).join("");
 		for (const key of ["t", "r", "g", "space", "↑↓", "enter", "esc"]) {
 			expect(text).toContain(`\x1b[1;92m${key}\x1b[22;39m`);
 		}
 	});
 
-	it("wraps at key boundaries so no line exceeds the width", () => {
-		const lines = hintLines(stubTheme, 60);
-		expect(lines.length).toBeGreaterThan(1);
-		for (const line of lines) {
-			expect(visibleWidth(line)).toBeLessThanOrEqual(60);
-		}
-		expect(plain(lines).replace(/\s+/g, " ")).toContain("space = clear");
+	it("renders the hint rows flat inside the box, never wrapped", () => {
+		const rows = buildPickerRows({ ...emptySources, history: [h("/x", 1)] });
+		const lines = new UnblockPicker(stubTheme, () => {}, rows).render(120);
+		const widths = new Set(lines.map((l) => visibleWidth(l)));
+		expect(widths.size).toBe(1);
+		const text = lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text).toContain("Press t = unlock for session · r = perm unlock for repo · g = perm unlock globally · space = clear");
 	});
 });

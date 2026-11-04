@@ -155,43 +155,55 @@ interface HintSegment {
 	separator: string;
 }
 
-/** Keys shown in the picker hint, in display order. */
-const HINT_SEGMENTS: readonly HintSegment[] = [
-	{ key: "t", label: " = unlock for session", separator: ", " },
-	{ key: "r", label: " = perm unlock for repo", separator: ", " },
-	{ key: "g", label: " = perm unlock globally", separator: ", " },
-	{ key: "space", label: " = clear", separator: " · " },
-	{ key: "↑↓", label: " move", separator: " · " },
-	{ key: "enter", label: " save & exit", separator: " · " },
-	{ key: "esc", label: " cancel", separator: "" },
+/** One row of the hint table: a plain prefix followed by key segments. */
+interface HintRow {
+	prefix: string;
+	segments: readonly HintSegment[];
+}
+
+/** The two hint rows: marking keys first, movement keys second. */
+const HINT_ROWS: readonly HintRow[] = [
+	{
+		prefix: "Press ",
+		segments: [
+			{ key: "t", label: " = unlock for session", separator: " · " },
+			{ key: "r", label: " = perm unlock for repo", separator: " · " },
+			{ key: "g", label: " = perm unlock globally", separator: " · " },
+			{ key: "space", label: " = clear", separator: "" },
+		],
+	},
+	{
+		prefix: "",
+		segments: [
+			{ key: "↑↓", label: " move", separator: " · " },
+			{ key: "enter", label: " save & exit", separator: " · " },
+			{ key: "esc", label: " cancel", separator: "" },
+		],
+	},
 ];
 
-/** Prefix of the first hint line. */
-const HINT_PREFIX = "Press ";
-
-/** Bold bright green (ANSI 92), used for key names in the hint. */
+/** Bold bright green (ANSI 92), used for the hint keys and the section headers. */
 const brightGreen = (s: string): string => `\x1b[1;92m${s}\x1b[22;39m`;
 
+/** Smallest box width that fits both hint rows: content plus lead and borders. */
+const HINT_MIN_WIDTH =
+	Math.max(
+		...HINT_ROWS.map((row) =>
+			visibleWidth(row.prefix) + row.segments.reduce((sum, seg) => sum + visibleWidth(`${seg.key}${seg.label}${seg.separator}`), 0),
+		),
+	) + 4;
+
 /**
- * Build the hint lines: key names in bright green, labels dimmed, wrapped at
- * segment boundaries so no line exceeds `maxWidth` visible columns.
+ * Build the two hint rows, one per HINT_ROWS entry: key names in bright
+ * green, labels dimmed. No wrapping; the box widens to HINT_MIN_WIDTH
+ * instead, so both rows always print flat.
  */
-export function hintLines(theme: Theme, maxWidth: number): string[] {
-	const lines: string[] = [];
-	let line = theme.fg("dim", HINT_PREFIX);
-	let lineWidth = visibleWidth(HINT_PREFIX);
-	for (const { key, label, separator } of HINT_SEGMENTS) {
-		const width = visibleWidth(`${key}${label}${separator}`);
-		if (lineWidth > 0 && lineWidth + width > maxWidth) {
-			lines.push(line);
-			line = "";
-			lineWidth = 0;
-		}
-		line += `${brightGreen(key)}${theme.fg("dim", `${label}${separator}`)}`;
-		lineWidth += width;
-	}
-	lines.push(line);
-	return lines;
+export function hintLines(theme: Theme): string[] {
+	return HINT_ROWS.map((row) =>
+		`${theme.fg("dim", row.prefix)}${row.segments
+			.map((seg) => `${brightGreen(seg.key)}${theme.fg("dim", `${seg.label}${seg.separator}`)}`)
+			.join("")}`,
+	);
 }
 
 /**
@@ -220,10 +232,10 @@ export class UnblockPicker implements Focusable {
 		private done: (result: UnlockPlan | undefined) => void,
 		private rows: PickerRow[],
 	) {
-		// Row content is cursor + mark tag + path; 76 is the floor that still
-		// fits the longest legend line.
+		// Row content is cursor + mark tag + path; 76 covers the longest legend
+		// line, and HINT_MIN_WIDTH covers the two flat hint rows.
 		const longest = this.rows.reduce((m, r) => Math.max(m, visibleWidth(displayPath(r.path))), 24);
-		this.width = Math.min(116, Math.max(76, longest + 10));
+		this.width = Math.min(116, Math.max(76, longest + 10, HINT_MIN_WIDTH));
 	}
 
 	/** No cached rendering state; re-render always reads the live marks. */
@@ -280,7 +292,7 @@ export class UnblockPicker implements Focusable {
 
 		lines.push(th.fg("border", `╭${"─".repeat(innerW)}╮`));
 		lines.push(row(` ${th.fg("accent", "🛡 Sandbox paths")}`));
-		for (const hint of hintLines(th, innerW - 3)) {
+		for (const hint of hintLines(th)) {
 			lines.push(row(`  ${hint}`));
 		}
 		lines.push(row(""));
