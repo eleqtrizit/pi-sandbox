@@ -240,8 +240,9 @@ describe("UnblockPicker", () => {
 		expect(text).toContain("Unlocked globally (0)");
 		expect(text).toContain("Unlocked in repo config (1)");
 		expect(text).toContain("Blocked paths (10 most recent) (1)");
-		expect(text).toContain("Press t = unlock for session · r = perm unlock for repo · g = perm unlock globally · space = clear");
-		expect(text).toContain("esc cancel");
+		expect(text).toContain("Press t");
+		expect(text).toContain("unlock for session  perm unlock for repo  perm unlock globally  clear  move  save & exit  cancel");
+		expect(text).toContain("clear  move  save & exit  cancel");
 	});
 
 	it("clears the selected row's mark with space", () => {
@@ -278,11 +279,28 @@ describe("UnblockPicker", () => {
 describe("hintLines", () => {
 	const plain = (lines: string[]) => lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""));
 
-	it("renders two rows: marking keys, then movement keys", () => {
-		expect(plain(hintLines(stubTheme))).toEqual([
-			"Press t = unlock for session · r = perm unlock for repo · g = perm unlock globally · space = clear",
-			"↑↓ move · enter save & exit · esc cancel",
+	it("renders a two-row table: keys above, descriptions below", () => {
+		const sp = (n: number): string => " ".repeat(n);
+		expect(plain(hintLines(stubTheme)).map((l) => l.trimEnd())).toEqual([
+			`Press t${sp(19)}r${sp(21)}g${sp(21)}space  ↑↓    enter        esc`,
+			`${sp(6)}unlock for session  perm unlock for repo  perm unlock globally  clear  move  save & exit  cancel`,
 		]);
+	});
+
+	it("aligns each description directly under its key", () => {
+		const [keys, labels] = plain(hintLines(stubTheme));
+		const afterPrefix = 6; // skip "Press ", which contains an "r"
+		for (const [key, label] of [
+			["t", "unlock for session"],
+			["r", "perm unlock for repo"],
+			["g", "perm unlock globally"],
+			["space", "clear"],
+			["↑↓", "move"],
+			["enter", "save & exit"],
+			["esc", "cancel"],
+		] as const) {
+			expect(labels.indexOf(label)).toBe(keys.indexOf(key, afterPrefix));
+		}
 	});
 
 	it("colors each key bright green", () => {
@@ -292,12 +310,13 @@ describe("hintLines", () => {
 		}
 	});
 
-	it("renders the hint rows flat inside the box, never wrapped", () => {
+	it("renders the hint table flat inside the box, never wrapped", () => {
 		const rows = buildPickerRows({ ...emptySources, history: [h("/x", 1)] });
 		const lines = new UnblockPicker(stubTheme, () => {}, rows).render(120);
 		const widths = new Set(lines.map((l) => visibleWidth(l)));
 		expect(widths.size).toBe(1);
 		const text = lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-		expect(text).toContain("Press t = unlock for session · r = perm unlock for repo · g = perm unlock globally · space = clear");
+		expect(text).toContain("Press t");
+		expect(text).toContain("unlock for session  perm unlock for repo");
 	});
 });

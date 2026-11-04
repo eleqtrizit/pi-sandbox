@@ -148,62 +148,61 @@ export function planFromMarks(rows: PickerRow[], marks: ReadonlyMap<string, Unlo
 /** Maximum rows rendered at once; older rows scroll into view. */
 const MAX_VISIBLE_ROWS = 18;
 
-/** One key in the picker hint: the key name, its action, and the separator printed after it. */
-interface HintSegment {
+/** One column of the hint table: a key and the description printed under it. */
+interface HintColumn {
+	/** Key name, bright green in the first table row. */
 	key: string;
+	/** Description, dim in the second table row. */
 	label: string;
-	separator: string;
 }
-
-/** One row of the hint table: a plain prefix followed by key segments. */
-interface HintRow {
-	prefix: string;
-	segments: readonly HintSegment[];
-}
-
-/** The two hint rows: marking keys first, movement keys second. */
-const HINT_ROWS: readonly HintRow[] = [
-	{
-		prefix: "Press ",
-		segments: [
-			{ key: "t", label: " = unlock for session", separator: " · " },
-			{ key: "r", label: " = perm unlock for repo", separator: " · " },
-			{ key: "g", label: " = perm unlock globally", separator: " · " },
-			{ key: "space", label: " = clear", separator: "" },
-		],
-	},
-	{
-		prefix: "",
-		segments: [
-			{ key: "↑↓", label: " move", separator: " · " },
-			{ key: "enter", label: " save & exit", separator: " · " },
-			{ key: "esc", label: " cancel", separator: "" },
-		],
-	},
-];
 
 /** Bold bright green (ANSI 92), used for the hint keys and the section headers. */
 const brightGreen = (s: string): string => `\x1b[1;92m${s}\x1b[22;39m`;
 
-/** Smallest box width that fits both hint rows: content plus lead and borders. */
+/** Hint table columns: marking keys first, movement keys second. */
+const HINT_COLUMNS: readonly HintColumn[] = [
+	{ key: "t", label: "unlock for session" },
+	{ key: "r", label: "perm unlock for repo" },
+	{ key: "g", label: "perm unlock globally" },
+	{ key: "space", label: "clear" },
+	{ key: "↑↓", label: "move" },
+	{ key: "enter", label: "save & exit" },
+	{ key: "esc", label: "cancel" },
+];
+
+/** Lead-in of the hint table's first row. */
+const HINT_PREFIX = "Press ";
+
+/** Gap between hint table columns, in visible columns. */
+const HINT_COLUMN_GAP = 2;
+
+/** Column widths: each column fits both its key and its description. */
+const HINT_COLUMN_WIDTHS: readonly number[] = HINT_COLUMNS.map((c) => Math.max(visibleWidth(c.key), visibleWidth(c.label)));
+
+/** Smallest box width that fits the hint table: content plus lead and borders. */
 const HINT_MIN_WIDTH =
-	Math.max(
-		...HINT_ROWS.map((row) =>
-			visibleWidth(row.prefix) + row.segments.reduce((sum, seg) => sum + visibleWidth(`${seg.key}${seg.label}${seg.separator}`), 0),
-		),
-	) + 4;
+	visibleWidth(HINT_PREFIX) +
+	HINT_COLUMN_WIDTHS.reduce((sum, w) => sum + w, 0) +
+	HINT_COLUMN_GAP * (HINT_COLUMNS.length - 1) +
+	4;
+
+/** Pad a plain string with spaces to a visible width. */
+const padTo = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - visibleWidth(s)));
 
 /**
- * Build the two hint rows, one per HINT_ROWS entry: key names in bright
- * green, labels dimmed. No wrapping; the box widens to HINT_MIN_WIDTH
- * instead, so both rows always print flat.
+ * Build the two-row hint table: bright green keys in the first row, their
+ * descriptions aligned underneath in the second. No borders or separators;
+ * the box widens to HINT_MIN_WIDTH so the table always prints flat.
  */
 export function hintLines(theme: Theme): string[] {
-	return HINT_ROWS.map((row) =>
-		`${theme.fg("dim", row.prefix)}${row.segments
-			.map((seg) => `${brightGreen(seg.key)}${theme.fg("dim", `${seg.label}${seg.separator}`)}`)
-			.join("")}`,
-	);
+	const gap = " ".repeat(HINT_COLUMN_GAP);
+	const prefix = theme.fg("dim", HINT_PREFIX);
+	const keysRow =
+		prefix + HINT_COLUMNS.map((c, i) => padTo(brightGreen(c.key), HINT_COLUMN_WIDTHS[i]!)).join(gap);
+	const labelsRow =
+		" ".repeat(visibleWidth(HINT_PREFIX)) +
+		HINT_COLUMNS.map((c, i) => theme.fg("dim", padTo(c.label, HINT_COLUMN_WIDTHS[i]!))).join(gap);
+	return [keysRow, labelsRow];
 }
 
 /**
