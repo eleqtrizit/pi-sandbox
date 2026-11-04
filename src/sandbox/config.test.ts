@@ -138,6 +138,17 @@ describe("applyConfig / currentConfig", () => {
 		expect(snap.unlockedPaths).toEqual(["/unlocked"]);
 		expect(snap.savedAt).toBeDefined();
 	});
+
+	it("keeps a temporary unlock out of every config snapshot", () => {
+		sandboxState.locked = false;
+		sandboxState.temporaryUnlock = true;
+		expect(currentConfig().sandboxLocked).toBe(true);
+	});
+
+	it("snapshots a permanent unlock as unlocked", () => {
+		sandboxState.locked = false;
+		expect(currentConfig().sandboxLocked).toBe(false);
+	});
 });
 
 describe("global config", () => {

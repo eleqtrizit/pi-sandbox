@@ -10,7 +10,7 @@ Bash commands run inside an OS-level sandbox, so the kernel enforces the rules: 
 pi install https://github.com/eleqtrizit/pi-sandbox
 ```
 
-Restart Pi or run `/reload`. The sandbox locks automatically on startup: commands and tools that reach outside the project root fail with an OS permission error and in-process tools are blocked with a clear reason. To confirm it is active, run `/sandbox-blocked` after an attempt, or `/sandbox-save-config` to persist your sandbox setup.
+Restart Pi or run `/reload`. The sandbox locks automatically on startup: commands and tools that reach outside the project root fail with an OS permission error and in-process tools are blocked with a clear reason. To confirm it is active, make an attempt outside the project root and check the footer status line. Run `/sandbox-unblock-paths` to browse blocked paths, unblock them, and persist your sandbox setup.
 
 ## Install
 
@@ -51,25 +51,21 @@ These paths are allowed from any sandbox, in both layers:
 
 ### Symlinks inside the sandbox
 
-Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: an earlier implementation re-scanned targets on every command, and a red-team probe demonstrated the bypass (fixed in commit 159e4df). With re-scanning, an agent could allowlist any path it can name by creating a link to it. Run `/sandbox-save-config` to rescan deliberately.
+Symlinks that exist when the session starts (for example `./common -> ../common`) are scanned with `fd` (manual-walk fallback) and their realpath targets are allowlisted in both layers, so shared directories reachable through links keep working. Symlinks created during the session are not allowlisted: an earlier implementation re-scanned targets on every command, and a red-team probe demonstrated the bypass (fixed in commit 159e4df). With re-scanning, an agent could allowlist any path it can name by creating a link to it. Exiting `/sandbox-unblock-paths` with Enter rescans deliberately.
 
 ### Sandbox config file
 
-The sandbox config file lives at `./.pi/` + the config basename in the project root, with a fallback to `./.agents/`. It stores lock state, allowlisted symlink targets, and unlocked paths. It is a trust anchor: only the slash commands may write it. Any tool whose input references the file is blocked.
+The sandbox config file lives at `./.pi/` + the config basename in the project root, with a fallback to `./.agents/`. It stores lock state, allowlisted symlink targets, and unlocked paths. A temporary unlock is never written: while it is in effect, every config snapshot records the sandbox as locked, so no later save promotes it to a persistent unlock. The file is a trust anchor: only the slash commands may write it. Any tool whose input references the file is blocked.
 
-A global config with the same basename lives in `~/.pi/agent/`. It stores only `unlockedPaths`, written by `/sandbox-unlock-last-path-globally`. At session start its paths are merged with the project config, and a project snapshot (`/sandbox-save-config`) never copies them. An unreadable global file is reported and never overwritten.
+A global config with the same basename lives in `~/.pi/agent/`. It stores only `unlockedPaths`, written by the `/sandbox-unblock-paths` global marks. At session start its paths are merged with the project config, and a project snapshot (the `/sandbox-unblock-paths` exit save) never copies them. An unreadable global file is reported and never overwritten.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/sandbox-unlock` | Disable all sandbox checks for this session. Sends "The sandbox has been unlocked." to the agent. |
+| `/sandbox-unlock` | Disable all sandbox checks. A picker offers *Temporary* (this session only; never written to any config) or *Permanent* (saved to the project config immediately). Escape cancels without unlocking. Without the interactive UI it falls back to a session-only unlock. Sends "The sandbox has been unlocked." to the agent. |
 | `/sandbox-lock` | Re-enable all sandbox checks. |
-| `/sandbox-save-config` | Persist the current sandbox state to the config file. |
-| `/sandbox-unlock-last-path` | Unlock the directory of the most recently blocked path, or the nth-to-last (e.g. `/sandbox-unlock-last-path 2`). Blocked files unlock their parent directory. Bash denials are read back from the command's error output (lines such as "Operation not permitted" that name a path under `$HOME`). Sends the unlocked directory to the agent. |
-| `/sandbox-unlock-last-path-globally` | Like `/sandbox-unlock-last-path`, but saves the directory to the global config in `~/.pi/agent/` at once, reloads it, and applies it to every project. |
-| `/sandbox-blocked` | List the 20 most recently blocked paths with their `/sandbox-unlock-last-path` index. |
-| `/sandbox-paths` | Browse the last blocked paths from `~/.pi/agent/sandbox-blocked.jsonl` (newest 20 first, arrow keys to page through up to 100) and unblock one locally or globally. Unlocking removes the path from the journal. |
+| `/sandbox-unblock-paths` | Browse blocked paths (in-memory history merged with `~/.pi/agent/sandbox-blocked.jsonl`, newest first), paths unlocked this session, and globally unlocked paths in one picker. Mark blocked entries with `t` (session only), `r` (repo config), or `g` (global config, `~/.pi/agent/`); blocked files unlock their parent directory. Enter applies the marks, removes the unlocked paths from the journal, sends the unlocked directories to the agent, and saves the sandbox config — even with nothing marked. Escape discards the marks. Bash denials are read back from the command's error output, so the picker lists them too. |
 
 The footer status line always shows the current state: lock state, symlink target count, unlocked path count, blocked attempt count, and the most recently blocked path.
 
@@ -89,6 +85,7 @@ The extension entry point (`extensions/index.ts`) delegates to `src/sandbox/`:
 | `config.ts` | Project config load, save, apply, and snapshot; global config load, add, and reload |
 | `denials.ts` | Extracts denied `$HOME` paths from bash error output |
 | `journal.ts` | Append-only JSONL journal of blocked paths at `~/.pi/agent/sandbox-blocked.jsonl`, with dedupe on read and periodic compaction |
+| `picker.ts` | The `/sandbox-unblock-paths` overlay: row building from history, journal, and unlock sets; t/g/r marking; plan extraction |
 | `display.ts` | Footer status line and startup banner |
 | `index.ts` | The sandboxed bash tool, `tool_call` interception, and slash commands |
 

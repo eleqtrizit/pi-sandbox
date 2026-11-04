@@ -48,7 +48,7 @@ export function isAllowedPath(resolvedPath: string, access: PathAccess = "write"
 			return true;
 		}
 
-		// Paths explicitly unlocked by the user via /sandbox-unlock-last-path.
+		// Paths explicitly unlocked by the user via /sandbox-unblock-paths.
 		if (allUnlockedPaths().some((allowed) => isUnderRealPrefix(candidate, allowed))) {
 			return true;
 		}
@@ -122,7 +122,7 @@ export function checkPath(path: string, sandboxDir: string, access: PathAccess =
 }
 
 /**
- * Resolve the path that /sandbox-unlock-last-path unlocks for a blocked path.
+ * Resolve the path that an unlock marks for a blocked path.
  * Blocked directories unlock themselves; blocked files unlock their parent
  * directory so the whole subtree becomes reachable. A path that no longer
  * exists (a blocked write to a new file) unlocks its parent too.

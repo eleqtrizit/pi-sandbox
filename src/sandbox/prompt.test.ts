@@ -7,10 +7,10 @@ describe("sandboxSystemPromptAddendum", () => {
 		expect(text).toContain("you are sandboxed into /tmp/project");
 	});
 
-	it("points to both unlock commands", () => {
+	it("points to both access commands", () => {
 		const text = sandboxSystemPromptAddendum("/tmp/project");
 		expect(text).toContain("/sandbox-unlock");
-		expect(text).toContain("/sandbox-unlock-last-path");
+		expect(text).toContain("/sandbox-unblock-paths");
 	});
 
 	it("explains invisibility of outside directories and the update channel", () => {
@@ -40,5 +40,22 @@ describe("before_agent_start handler", () => {
 			expect(res.systemPrompt.startsWith(sandboxSystemPromptAddendum(process.cwd()))).toBe(true);
 			expect(res.systemPrompt.endsWith("BASE PROMPT")).toBe(true);
 		});
+	});
+});
+
+describe("registerSandbox command set", () => {
+	it("registers exactly the three consolidated access commands", () => {
+		const commands: string[] = [];
+		const pi = {
+			on: () => {},
+		} as never;
+		const stub = pi as Record<string, unknown>;
+		stub.events = { on: () => () => {} };
+		stub.registerTool = () => {};
+		stub.registerCommand = (name: string) => {
+			commands.push(name);
+		};
+		registerSandbox(pi);
+		expect(commands.sort()).toEqual(["sandbox-lock", "sandbox-unblock-paths", "sandbox-unlock"]);
 	});
 });

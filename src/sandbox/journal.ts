@@ -122,7 +122,7 @@ export function readJournal(limit: number, path: string = journalPath()): Journa
 
 /**
  * Remove every journal line whose path matches `target`, then rewrite the
- * file. Called when a path is unlocked so /sandbox-paths stops offering it.
+ * file. Called when a path is unlocked so /sandbox-unblock-paths stops offering it.
  * No-op (and returns the path unchanged) when the journal is missing.
  */
 export function removeJournalPath(target: string, path: string = journalPath()): void {

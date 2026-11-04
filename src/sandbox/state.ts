@@ -16,6 +16,13 @@ export const HOME = homedir();
 /** Master toggle: when false, all sandbox checks are skipped. */
 export const sandboxState = {
 	locked: true,
+	/**
+	 * True when the current unlock is session-only. Every config snapshot
+	 * then records the sandbox as locked, so no later save (such as the
+	 * /sandbox-unblock-paths exit save) can promote a temporary unlock to a
+	 * persistent one.
+	 */
+	temporaryUnlock: false,
 };
 
 /**
@@ -34,7 +41,7 @@ export function markSymlinkScan(now: number): void {
 	symlinkTargetsAt = now;
 }
 
-/** One recorded sandbox block, kept for the /sandbox-unlock-last-path workflow. */
+/** One recorded sandbox block, kept for the /sandbox-unblock-paths picker. */
 export interface BlockedEntry {
 	/** Realpath-resolved path that was denied. */
 	path: string;
@@ -51,22 +58,22 @@ export const BLOCKED_HISTORY_MAX = 50;
 
 /**
  * Ring buffer of recent blocked paths, newest last. Each path is kept at most
- * once: a repeat block moves the existing entry to the end so /sandbox-unlock-last-path
+ * once: a repeat block moves the existing entry to the end so /sandbox-unblock-paths
  * always surfaces the most recently denied unique path.
  */
 export const blockedHistory: BlockedEntry[] = [];
 
 /**
- * Paths explicitly unlocked by the user via /sandbox-unlock-last-path. Treated as
+ * Paths explicitly unlocked by the user via /sandbox-unblock-paths. Treated as
  * prefix-allowed (like PREFIX_ALLOWED_PATHS) in isAllowedPath, and persisted
- * alongside the rest of the sandbox state by /sandbox-save-config.
+ * alongside the rest of the sandbox state by the /sandbox-unblock-paths exit save.
  */
 export const unlockedPaths: Set<string> = new Set();
 
 /**
- * Paths unlocked for every project by /sandbox-unlock-last-path-globally. Loaded from
+ * Paths unlocked for every project via the picker's global marks. Loaded from
  * the global config file and kept apart from `unlockedPaths` so that
- * /sandbox-save-config never copies them into a project config.
+ * the /sandbox-unblock-paths exit save never copies them into a project config.
  */
 export const globalUnlockedPaths: Set<string> = new Set();
 
@@ -91,7 +98,7 @@ export function allUnlockedPaths(): string[] {
 }
 
 /**
- * Record a blocked path attempt for the /sandbox-unlock-last-path workflow. The
+ * Record a blocked path attempt for the /sandbox-unblock-paths picker. The
  * resolved path is realpath'd so the stored form matches the realpath'd
  * candidates that isAllowedPath checks. Each path is kept at most once: a
  * repeat block moves the existing entry to the end (most recent).
@@ -114,6 +121,7 @@ export function recordBlocked(original: string, resolved: string, tool: string, 
  */
 export function resetState(): void {
 	sandboxState.locked = true;
+	sandboxState.temporaryUnlock = false;
 	symlinkTargets.clear();
 	markSymlinkScan(0);
 	blockedHistory.length = 0;

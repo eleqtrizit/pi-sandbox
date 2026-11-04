@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { HOME, globalUnlockedPaths, markSymlinkScan, sandboxState, symlinkTargets, unlockedPaths } from "./state.js";
 
-/** Serialized sandbox state written by /sandbox-save-config. */
+/** Serialized sandbox state written by the /sandbox-unblock-paths exit save. */
 export interface SandboxConfig {
 	version: number;
 	sandboxLocked: boolean;
@@ -103,7 +103,9 @@ export function applyConfig(cfg: SandboxConfig): void {
 export function currentConfig(): SandboxConfig {
 	return {
 		version: 1,
-		sandboxLocked: sandboxState.locked,
+		// A temporary unlock is runtime-only: snapshots stay locked so no
+		// save ever promotes a session unlock to a persistent one.
+		sandboxLocked: sandboxState.locked || sandboxState.temporaryUnlock,
 		symlinkTargets: [...symlinkTargets],
 		unlockedPaths: [...unlockedPaths],
 		savedAt: new Date().toISOString(),
