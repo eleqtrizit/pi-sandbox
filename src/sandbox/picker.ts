@@ -1,9 +1,10 @@
 /**
  * The interactive path picker behind /sandbox-unblock-paths.
  *
- * Shows three sections in one overlay: blocked paths (merged from the
- * persistent journal and the in-memory history), paths unlocked for this
- * session, and paths unlocked globally. The user moves with the arrow keys,
+ * Shows three sections in one overlay: paths unlocked globally, paths
+ * unlocked in the repo config, and the 10 most recently blocked paths
+ * (merged from the persistent journal and the in-memory history). The user
+ * moves with the arrow keys,
  * marks blocked rows with t (temporary, this session), r (repo config), or
  * g (global config), and exits with Enter, which applies the marks and saves
  * the sandbox config automatically. Escape discards the marks.
@@ -44,7 +45,7 @@ const SCOPE_KEYS: ReadonlyMap<KeyId, UnlockScope> = new Map<KeyId, UnlockScope>(
 /** One row shown in the picker. */
 export interface PickerRow {
 	/** Which section the row belongs to. Only "blocked" rows can be marked. */
-	section: "blocked" | "session" | "global";
+	section: "blocked" | "repo" | "global";
 	/** Realpath-resolved path the row describes. */
 	path: string;
 	/** Directory an unlock would allow: the row path itself, or its parent for blocked files. */
@@ -65,18 +66,25 @@ export interface PickerSources {
 	history: BlockedEntry[];
 	/** Prefixes already allowed (session, global, and extension paths). Blocked entries under them are hidden. */
 	alreadyUnlocked: string[];
-	/** Session-unlocked roots to list in the picker. */
-	sessionPaths: string[];
+	/** Repo-config unlocked roots to list in the picker. */
+	repoPaths: string[];
 	/** Globally unlocked roots to list in the picker. */
 	globalPaths: string[];
 }
 
 /**
- * Build the picker rows: blocked paths from both sources merged and deduped
- * by path (newest occurrence wins, newest first), with already-unlocked
- * entries hidden, followed by the session and global unlock lists. Blocked
- * entries whose paths are identical keep only the newest occurrence, matching
- * the dedupe of the journal and of recordBlocked.
+ * Maximum blocked rows kept in the picker: the 10 most recently blocked paths.
+ * Older entries stay in the journal/history sources but are not offered.
+ */
+const MAX_BLOCKED_ROWS = 10;
+
+/**
+ * Build the picker rows: globally unlocked roots, then repo-config unlocked
+ * roots (both sorted), then blocked paths from both sources merged, deduped
+ * by path (newest occurrence wins, newest first), capped at the 10 most
+ * recent, with already-unlocked entries hidden. Blocked entries whose paths
+ * are identical keep only the newest occurrence, matching the dedupe of the
+ * journal and of recordBlocked.
  */
 export function buildPickerRows(sources: PickerSources): PickerRow[] {
 	const newestByPath = new Map<string, { original: string; tool: string; timestamp: number }>();
@@ -89,6 +97,7 @@ export function buildPickerRows(sources: PickerSources): PickerRow[] {
 	const blocked = [...newestByPath.entries()]
 		.filter(([path]) => !sources.alreadyUnlocked.some((prefix) => isUnderRealPrefix(path, prefix)))
 		.sort((a, b) => b[1].timestamp - a[1].timestamp)
+		.slice(0, MAX_BLOCKED_ROWS)
 		.map(([path, meta]) => ({
 			section: "blocked" as const,
 			path,
@@ -98,7 +107,7 @@ export function buildPickerRows(sources: PickerSources): PickerRow[] {
 			timestamp: meta.timestamp,
 		}));
 
-	const unlockedRow = (section: "session" | "global") => (path: string): PickerRow => ({
+	const unlockedRow = (section: "repo" | "global") => (path: string): PickerRow => ({
 		section,
 		path,
 		target: path,
@@ -108,9 +117,9 @@ export function buildPickerRows(sources: PickerSources): PickerRow[] {
 	});
 
 	return [
-		...blocked,
-		...[...sources.sessionPaths].sort().map(unlockedRow("session")),
 		...[...sources.globalPaths].sort().map(unlockedRow("global")),
+		...[...sources.repoPaths].sort().map(unlockedRow("repo")),
+		...blocked,
 	];
 }
 
@@ -221,9 +230,9 @@ export class UnblockPicker implements Focusable {
 		lines.push(row(""));
 
 		const sections: Array<{ section: PickerRow["section"]; title: string }> = [
-			{ section: "blocked", title: "Blocked paths" },
-			{ section: "session", title: "Unlocked this session" },
 			{ section: "global", title: "Unlocked globally" },
+			{ section: "repo", title: "Unlocked in repo config" },
+			{ section: "blocked", title: `Blocked paths (${MAX_BLOCKED_ROWS} most recent)` },
 		];
 
 		const visibleRows = this.rows.slice(this.top, this.top + MAX_VISIBLE_ROWS);

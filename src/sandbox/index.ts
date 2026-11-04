@@ -294,10 +294,10 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		return { lines, hadError, applied };
 	}
 
-	// /sandbox-unblock-paths - the single path-access picker: browse blocked,
-	// session-unlocked, and globally unlocked paths, mark entries to unblock
-	// as t (session), r (repo config), or g (global config); Enter applies and
-	// saves, Escape cancels.
+	// /sandbox-unblock-paths - the single path-access picker: browse globally
+	// unlocked, repo-config unlocked, and the 10 most recently blocked paths,
+	// mark entries to unblock as t (session), r (repo config), or g (global
+	// config); Enter applies and saves, Escape cancels.
 	pi.registerCommand("sandbox-unblock-paths", {
 		description: "Browse blocked and unlocked paths; mark entries to unblock (t = this session, r = repo config, g = global config). Enter applies and saves; Escape cancels",
 		handler: async (_args, ctx) => {
@@ -309,11 +309,11 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				journal: readJournal(100),
 				history: blockedHistory,
 				alreadyUnlocked: [...allUnlockedPaths(), ...validExtensionPaths()],
-				sessionPaths: [...unlockedPaths],
+				repoPaths: [...unlockedPaths],
 				globalPaths: [...globalUnlockedPaths],
 			});
 			if (rows.length === 0) {
-				ctx.ui.notify("Nothing to show: no blocked, session-unlocked, or globally unlocked paths yet.", "info");
+				ctx.ui.notify("Nothing to show: no blocked, repo-unlocked, or globally unlocked paths yet.", "info");
 				return;
 			}
 			const plan = await ctx.ui.custom<UnlockPlan | undefined>(

@@ -1,8 +1,8 @@
 /**
  * Tests for the /sandbox-unblock-paths picker: row building (merge, dedupe,
- * filtering, sectioning), plan extraction, and the component's keyboard state
- * machine. Rendering is smoke-tested only; the pure functions carry the
- * behavior.
+ * filtering, sectioning, capped blocked list), plan extraction, and the
+ * component's keyboard state machine. Rendering is smoke-tested only; the
+ * pure functions carry the behavior.
  */
 
 import { mkdirSync, mkdtempSync } from "node:fs";
@@ -38,13 +38,15 @@ function blockedDirs(): { a: string; b: string } {
 	return { a, b };
 }
 
+const emptySources = { journal: [] as JournalEntry[], history: [] as BlockedEntry[], alreadyUnlocked: [] as string[], repoPaths: [] as string[], globalPaths: [] as string[] };
+
 describe("buildPickerRows", () => {
 	it("merges journal and history, keeping the newest occurrence per path and sorting newest first", () => {
 		const rows = buildPickerRows({
 			journal: [j("/a", 100), j("/b", 300)],
 			history: [h("/a", 200)],
 			alreadyUnlocked: [],
-			sessionPaths: [],
+			repoPaths: [],
 			globalPaths: [],
 		});
 		const blocked = rows.filter((r) => r.section === "blocked");
@@ -55,12 +57,31 @@ describe("buildPickerRows", () => {
 		expect(blocked[1]!.timestamp).toBe(200);
 	});
 
+	it("caps blocked rows at the 10 most recent, newest first", () => {
+		const rows = buildPickerRows({
+			journal: Array.from({ length: 5 }, (_, i) => j(`/old/${i}`, i + 1)),
+			history: Array.from({ length: 8 }, (_, i) => h(`/new/${i}`, i + 100)),
+			alreadyUnlocked: [],
+			repoPaths: [],
+			globalPaths: [],
+		});
+		const blocked = rows.filter((r) => r.section === "blocked");
+		expect(blocked).toHaveLength(10);
+		// The 8 history entries are all newer than the journal's; the two
+		// newest journal entries fill the remaining slots.
+		expect(blocked.map((r) => r.path)).toEqual([
+			...Array.from({ length: 8 }, (_, i) => `/new/${7 - i}`),
+			"/old/4",
+			"/old/3",
+		]);
+	});
+
 	it("hides blocked entries under already-unlocked prefixes", () => {
 		const rows = buildPickerRows({
 			journal: [],
 			history: [h("/private/a", 1), h("/elsewhere/b", 2)],
 			alreadyUnlocked: ["/private"],
-			sessionPaths: [],
+			repoPaths: [],
 			globalPaths: [],
 		});
 		expect(rows.map((r) => r.path)).toEqual(["/elsewhere/b"]);
@@ -73,26 +94,26 @@ describe("buildPickerRows", () => {
 			journal: [],
 			history: [h(file, 1, "write"), h(dir, 2, "read")],
 			alreadyUnlocked: [],
-			sessionPaths: [],
+			repoPaths: [],
 			globalPaths: [],
 		});
 		expect(rows.find((r) => r.path === file)!.target).toBe(dir); // ENOENT file: parent
 		expect(rows.find((r) => r.path === dir)!.target).toBe(dir);
 	});
 
-	it("lists session and global unlock roots after the blocked rows, sorted", () => {
+	it("lists global unlock roots first, repo unlock roots second, then the blocked rows, both unlocked lists sorted", () => {
 		const rows = buildPickerRows({
 			journal: [],
 			history: [h("/gone", 1)],
 			alreadyUnlocked: [],
-			sessionPaths: ["/b", "/a"],
+			repoPaths: ["/b", "/a"],
 			globalPaths: ["/z"],
 		});
 		expect(rows.map((r) => `${r.section}:${r.path}`)).toEqual([
-			"blocked:/gone",
-			"session:/a",
-			"session:/b",
 			"global:/z",
+			"repo:/a",
+			"repo:/b",
+			"blocked:/gone",
 		]);
 	});
 });
@@ -102,14 +123,14 @@ describe("planFromMarks", () => {
 		{ section: "blocked", path: "/one", target: "/one", original: "/one", tool: "read", timestamp: 2 },
 		{ section: "blocked", path: "/two/file", target: "/two", original: "/two/file", tool: "read", timestamp: 1 },
 		{ section: "blocked", path: "/other/file", target: "/two", original: "/other/file", tool: "bash", timestamp: 0 },
-		{ section: "session", path: "/s", target: "/s", original: "/s", tool: "", timestamp: 0 },
+		{ section: "repo", path: "/s", target: "/s", original: "/s", tool: "", timestamp: 0 },
 	];
 
 	it("groups marks by scope in row order and skips unmarked or unlocked-section rows", () => {
 		const marks = new Map<string, UnlockScope>([
 			["/one", "temporary"],
 			["/two", "repo"],
-			["/s", "global"], // session rows are never marked by the component
+			["/s", "global"], // repo rows are never marked by the component
 		]);
 		expect(planFromMarks(rows, marks)).toEqual<UnlockPlan>({
 			temporary: ["/one"],
@@ -141,7 +162,7 @@ describe("UnblockPicker", () => {
 	}
 
 	it("cancel passes undefined on Escape", () => {
-		const rows = buildPickerRows({ journal: [], history: [h("/x", 1)], alreadyUnlocked: [], sessionPaths: [], globalPaths: [] });
+		const rows = buildPickerRows({ ...emptySources, history: [h("/x", 1)] });
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		const p = picker(rows, (r) => (result = r));
 		p.handleInput("\x1b[A"); // irrelevant navigation first
@@ -150,7 +171,7 @@ describe("UnblockPicker", () => {
 	});
 
 	it("Enter passes an empty plan when nothing is marked", () => {
-		const rows = buildPickerRows({ journal: [], history: [h("/x", 1)], alreadyUnlocked: [], sessionPaths: [], globalPaths: [] });
+		const rows = buildPickerRows({ ...emptySources, history: [h("/x", 1)] });
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		picker(rows, (r) => (result = r)).handleInput("\r");
 		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
@@ -159,17 +180,14 @@ describe("UnblockPicker", () => {
 	it("marks the selected blocked row, switches scope on a different key, and clears on a repeat", () => {
 		const { a, b } = blockedDirs();
 		const rows = buildPickerRows({
-			journal: [],
+			...emptySources,
 			history: [h(a, 2), h(b, 1)],
-			alreadyUnlocked: [],
-			sessionPaths: [],
-			globalPaths: [],
 		});
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		const p = picker(rows, (r) => (result = r));
-		p.handleInput("t"); // first row, newest blocked
+		p.handleInput("t"); // first blocked row, newest
 		p.handleInput("r"); // same row: switch to repo
-		p.handleInput("j"); // move to second row
+		p.handleInput("j"); // move to second blocked row
 		p.handleInput("g"); // global
 		p.handleInput("r"); // same row again: switch to repo
 		p.handleInput("r"); // third press clears it
@@ -177,14 +195,8 @@ describe("UnblockPicker", () => {
 		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [a], global: [] });
 	});
 
-	it("ignores scope keys on session-unlocked rows", () => {
-		const rows = buildPickerRows({
-			journal: [],
-			history: [],
-			alreadyUnlocked: [],
-			sessionPaths: ["/s"],
-			globalPaths: [],
-		});
+	it("ignores scope keys on repo-unlocked rows", () => {
+		const rows = buildPickerRows({ ...emptySources, repoPaths: ["/s"] });
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		const p = picker(rows, (r) => (result = r));
 		p.handleInput("t");
@@ -195,17 +207,15 @@ describe("UnblockPicker", () => {
 	it("navigates with j/k and arrow keys across sections", () => {
 		const { a } = blockedDirs();
 		const rows = buildPickerRows({
-			journal: [],
+			...emptySources,
 			history: [h(a, 2)],
-			alreadyUnlocked: [],
-			sessionPaths: ["/s"],
-			globalPaths: [],
+			repoPaths: ["/s"],
 		});
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		const p = picker(rows, (r) => (result = r));
-		p.handleInput("j"); // to session row
-		p.handleInput("j"); // clamped at the last row
-		p.handleInput("k"); // back to blocked row
+		p.handleInput("k"); // clamped at the first row (repo)
+		p.handleInput("j"); // to the blocked row
+		p.handleInput("j"); // clamped at the last row (still blocked)
 		p.handleInput("t");
 		p.handleInput("\r");
 		expect(result).toEqual<UnlockPlan>({ temporary: [a], repo: [], global: [] });
@@ -213,20 +223,18 @@ describe("UnblockPicker", () => {
 
 	it("renders a uniform-width box with all three sections", () => {
 		const rows = buildPickerRows({
-			journal: [],
+			...emptySources,
 			history: [h("/a/b/c", 2, "read", "~/a/b/c")],
-			alreadyUnlocked: [],
-			sessionPaths: ["/s"],
-			globalPaths: [],
+			repoPaths: ["/s"],
 		});
 		const lines = new UnblockPicker(stubTheme, () => {}, rows).render(120);
 		expect(lines.length).toBeGreaterThan(5);
 		const widths = new Set(lines.map((l) => visibleWidth(l)));
 		expect(widths.size).toBe(1);
 		const text = lines.join("\n");
-		expect(text).toContain("Blocked paths (1)");
-		expect(text).toContain("Unlocked this session (1)");
 		expect(text).toContain("Unlocked globally (0)");
+		expect(text).toContain("Unlocked in repo config (1)");
+		expect(text).toContain("Blocked paths (10 most recent) (1)");
 		expect(text).toContain("t session");
 	});
 });
