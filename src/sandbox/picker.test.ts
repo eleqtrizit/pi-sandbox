@@ -222,23 +222,26 @@ describe("UnblockPicker", () => {
 		expect(result).toEqual<UnlockPlan>({ temporary: [a], repo: [], global: [] });
 	});
 
-	it("shrinks the box to the terminal height and scrolls the list instead of clipping", () => {
+	it("scrolls the whole box when the terminal is shorter than the box", () => {
 		const history = Array.from({ length: 10 }, (_, i) => h(`/p/${i}`, i));
 		const rows = buildPickerRows({ ...emptySources, history });
 		const p = new UnblockPicker(stubTheme, () => {}, rows, () => 24);
 		const plain = (lines: string[]): string => lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 		const first = p.render(120);
-		expect(first.length).toBeLessThanOrEqual(24);
-		expect(plain(first)).toContain("/p/9"); // newest blocked row visible
-		expect(plain(first)).toContain("more (scroll down)"); // older rows hidden below
+		expect(first).toHaveLength(24); // box height pinned to the terminal
+		expect(plain(first)).toContain("/p/9");
 		expect(plain(first)).not.toContain("/p/0");
-		p.handleInput("\x1b[6~"); // PageDown moves the window one page
+		expect(plain(first.slice(-1))).toContain("↓"); // content hidden below
+		expect(plain(first.slice(0, 1))).not.toContain("↑"); // nothing hidden above
+		p.handleInput("\x1b[6~"); // PageDown scrolls the box a full page
 		const second = p.render(120);
-		expect(second.length).toBeLessThanOrEqual(24);
-		expect(plain(second)).not.toContain("/p/9");
-		expect(plain(second)).toContain("/p/4");
-		p.handleInput("\x1b[5~"); // PageUp returns to the first page
-		expect(plain(p.render(120))).toContain("/p/9");
+		expect(second).toHaveLength(24);
+		expect(plain(second)).toContain("/p/0");
+		expect(plain(second.slice(0, 1))).toContain("↑");
+		p.handleInput("\x1b[5~"); // PageUp scrolls back to the top of the box
+		const third = p.render(120);
+		expect(plain(third)).toContain("/p/9");
+		expect(plain(third.slice(0, 1))).not.toContain("↑");
 	});
 
 	it("renders a uniform-width box with all three sections", () => {		const rows = buildPickerRows({
