@@ -148,19 +148,19 @@ export function planFromMarks(rows: PickerRow[], marks: ReadonlyMap<string, Unlo
 /** Maximum rows rendered at once; older rows scroll into view. */
 const MAX_VISIBLE_ROWS = 18;
 
-/** One column of the hint table: a key and the description printed under it. */
-interface HintColumn {
-	/** Key name, bright green in the first table row. */
+/** One entry of the hint table: a key and its description, printed on one line. */
+interface HintEntry {
+	/** Key name, bright green in the first table column. */
 	key: string;
-	/** Description, dim in the second table row. */
+	/** Description, dim in the second table column. */
 	label: string;
 }
 
 /** Bold bright green (ANSI 92), used for the hint keys and the section headers. */
 const brightGreen = (s: string): string => `\x1b[1;92m${s}\x1b[22;39m`;
 
-/** Hint table columns: marking keys first, movement keys second. */
-const HINT_COLUMNS: readonly HintColumn[] = [
+/** Hint table entries: marking keys first, movement keys second. */
+const HINT_ENTRIES: readonly HintEntry[] = [
 	{ key: "t", label: "unlock for session" },
 	{ key: "r", label: "perm unlock for repo" },
 	{ key: "g", label: "perm unlock globally" },
@@ -170,39 +170,32 @@ const HINT_COLUMNS: readonly HintColumn[] = [
 	{ key: "esc", label: "cancel" },
 ];
 
-/** Lead-in of the hint table's first row. */
-const HINT_PREFIX = "Press ";
-
-/** Gap between hint table columns, in visible columns. */
+/** Gap between the key and description columns, in visible columns. */
 const HINT_COLUMN_GAP = 2;
 
-/** Column widths: each column fits both its key and its description. */
-const HINT_COLUMN_WIDTHS: readonly number[] = HINT_COLUMNS.map((c) => Math.max(visibleWidth(c.key), visibleWidth(c.label)));
+/** Width of the key column: the widest key, so all descriptions align. */
+const HINT_KEY_COLUMN_WIDTH = Math.max(...HINT_ENTRIES.map((e) => visibleWidth(e.key)));
 
 /** Smallest box width that fits the hint table: content plus lead and borders. */
 const HINT_MIN_WIDTH =
-	visibleWidth(HINT_PREFIX) +
-	HINT_COLUMN_WIDTHS.reduce((sum, w) => sum + w, 0) +
-	HINT_COLUMN_GAP * (HINT_COLUMNS.length - 1) +
+	HINT_KEY_COLUMN_WIDTH +
+	HINT_COLUMN_GAP +
+	Math.max(...HINT_ENTRIES.map((e) => visibleWidth(e.label))) +
 	4;
 
 /** Pad a plain string with spaces to a visible width. */
 const padTo = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - visibleWidth(s)));
 
 /**
- * Build the two-row hint table: bright green keys in the first row, their
- * descriptions aligned underneath in the second. No borders or separators;
- * the box widens to HINT_MIN_WIDTH so the table always prints flat.
+ * Build the hint table, one line per key: bright green keys in the first
+ * column, descriptions aligned in the second. No borders or separators.
  */
 export function hintLines(theme: Theme): string[] {
 	const gap = " ".repeat(HINT_COLUMN_GAP);
-	const prefix = theme.fg("dim", HINT_PREFIX);
-	const keysRow =
-		prefix + HINT_COLUMNS.map((c, i) => padTo(brightGreen(c.key), HINT_COLUMN_WIDTHS[i]!)).join(gap);
-	const labelsRow =
-		" ".repeat(visibleWidth(HINT_PREFIX)) +
-		HINT_COLUMNS.map((c, i) => theme.fg("dim", padTo(c.label, HINT_COLUMN_WIDTHS[i]!))).join(gap);
-	return [keysRow, labelsRow];
+	return HINT_ENTRIES.map(
+		(e) =>
+			`${padTo(brightGreen(e.key), HINT_KEY_COLUMN_WIDTH)}${gap}${theme.fg("dim", e.label)}`,
+	);
 }
 
 /**
