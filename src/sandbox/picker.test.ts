@@ -233,17 +233,30 @@ describe("UnblockPicker", () => {
 		expect(first).toHaveLength(24); // box height pinned to the terminal
 		expect(plain(first)).toContain("/p/9");
 		expect(plain(first)).not.toContain("/p/0");
+		expect(plain(first)).not.toContain("custom path: press c");
 		expect(plain(first.slice(-1))).toContain("↓"); // content hidden below
 		expect(plain(first.slice(0, 1))).not.toContain("↑"); // nothing hidden above
-		p.handleInput("\x1b[6~"); // PageDown scrolls the box a full page
+		p.handleInput("\x1b[6~"); // PageDown scrolls the box, not the selection
 		const second = p.render(120);
 		expect(second).toHaveLength(24);
 		expect(plain(second)).toContain("/p/0");
+		expect(plain(second)).toContain("custom path: press c"); // bottom of the box in view
 		expect(plain(second.slice(0, 1))).toContain("↑");
 		p.handleInput("\x1b[5~"); // PageUp scrolls back to the top of the box
 		const third = p.render(120);
 		expect(plain(third)).toContain("/p/9");
 		expect(plain(third.slice(0, 1))).not.toContain("↑");
+	});
+
+	it("jumps to the bottom when the custom-path input opens with c", () => {
+		const history = Array.from({ length: 10 }, (_, i) => h(`/p/${i}`, i));
+		const rows = buildPickerRows({ ...emptySources, history });
+		const p = new UnblockPicker(stubTheme, () => {}, rows, () => 24);
+		const plain = (lines: string[]): string => lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		p.handleInput("c");
+		const text = plain(p.render(120));
+		expect(text).toContain("custom path:"); // input row visible at the bottom
+		expect(text).toContain("▌"); // with the text cursor
 	});
 
 	it("renders a uniform-width box with all three sections", () => {		const rows = buildPickerRows({
@@ -263,8 +276,8 @@ describe("UnblockPicker", () => {
 		expect(text).toContain("Unlocked globally (0)");
 		expect(text).toContain("Unlocked in repo config (1)");
 		expect(text).toContain("Blocked paths (10 most recent) (1)");
-		expect(text).toContain("t      unlock for session");
-		expect(text).toContain("esc    cancel");
+		expect(text).toContain("t         unlock for session");
+		expect(text).toContain("esc       cancel");
 	});
 
 	it("clears the selected row's mark with space", () => {
@@ -351,14 +364,15 @@ describe("hintLines", () => {
 
 	it("renders one line per key, key first, description second", () => {
 		expect(plain(hintLines(stubTheme)).map((l) => l.trimEnd())).toEqual([
-			"t      unlock for session",
-			"r      perm unlock for repo",
-			"g      perm unlock globally",
-			"space  clear",
-			"c      add a custom path",
-			"↑↓     move",
-			"enter  save & exit",
-			"esc    cancel",
+			"t         unlock for session",
+			"r         perm unlock for repo",
+			"g         perm unlock globally",
+			"space     clear",
+			"c         add a custom path",
+			"↑↓        move",
+			"PgUp/PgDn scroll the box",
+			"enter     save & exit",
+			"esc       cancel",
 		]);
 	});
 
@@ -373,7 +387,7 @@ describe("hintLines", () => {
 
 	it("colors each key bright green", () => {
 		const text = hintLines(stubTheme).join("");
-		for (const key of ["t", "r", "g", "space", "c", "↑↓", "enter", "esc"]) {
+		for (const key of ["t", "r", "g", "space", "c", "↑↓", "PgUp/PgDn", "enter", "esc"]) {
 			expect(text).toContain(`\x1b[1;92m${key}\x1b[22;39m`);
 		}
 	});
@@ -384,7 +398,7 @@ describe("hintLines", () => {
 		const widths = new Set(lines.map((l) => visibleWidth(l)));
 		expect(widths.size).toBe(1);
 		const text = lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-		expect(text).toContain("t      unlock for session");
-		expect(text).toContain("esc    cancel");
+		expect(text).toContain("t         unlock for session");
+		expect(text).toContain("esc       cancel");
 	});
 });

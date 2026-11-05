@@ -171,6 +171,7 @@ const HINT_ENTRIES: readonly HintEntry[] = [
 	{ key: "space", label: "clear" },
 	{ key: "c", label: "add a custom path" },
 	{ key: "↑↓", label: "move" },
+	{ key: "PgUp/PgDn", label: "scroll the box" },
 	{ key: "enter", label: "save & exit" },
 	{ key: "esc", label: "cancel" },
 ];
@@ -225,6 +226,12 @@ export class UnblockPicker implements Focusable {
 	private scroll = 0;
 	/** Viewport height in content lines; Infinity when the whole box fits. */
 	private view = Number.POSITIVE_INFINITY;
+	/**
+	 * True when the viewport should track the selection (movement and marking);
+	 * false after PgUp/PgDn scroll the box freely. c sets it false and jumps
+	 * to the bottom so the custom-path input comes into view.
+	 */
+	private followSelection = true;
 
 	/**
 	 * @param theme Active pi theme for colors.
@@ -264,13 +271,14 @@ export class UnblockPicker implements Focusable {
 			return;
 		}
 		if (matchesKey(data, "pageUp")) {
-			this.scroll = Math.max(0, this.scroll - this.pageStep());
-			this.move(-this.pageStep());
+			// Page keys scroll the box itself; the selection stays put.
+			this.scroll -= this.pageStep();
+			this.followSelection = false;
 			return;
 		}
 		if (matchesKey(data, "pageDown")) {
 			this.scroll += this.pageStep();
-			this.move(this.pageStep());
+			this.followSelection = false;
 			return;
 		}
 		if (matchesKey(data, "up") || matchesKey(data, "k")) {
@@ -284,12 +292,17 @@ export class UnblockPicker implements Focusable {
 		if (matchesKey(data, "c")) {
 			this.inputMode = true;
 			this.inputText = "";
+			// Reveal the input row at the bottom of the box.
+			this.scroll = Number.MAX_SAFE_INTEGER;
+			this.followSelection = false;
 			return;
 		}
 		const row = this.rows[this.selected];
 		if (row?.section !== "blocked" && row?.section !== "custom") {
 			return;
 		}
+		// Marking acts on the selection, so bring it back into view.
+		this.followSelection = true;
 		if (matchesKey(data, "space")) {
 			this.marks.delete(row.path);
 			return;
@@ -370,15 +383,18 @@ export class UnblockPicker implements Focusable {
 			return [this.boxBorder("top", false), ...content, this.boxBorder("bottom", false)];
 		}
 		// The terminal is shorter than the box: every row keeps its line and
-		// the whole box scrolls. The window follows the line the selection is
-		// on, and the borders carry ↑/↓ when content lies beyond them.
+		// the whole box scrolls. Selection movement and marking track the
+		// selected line; PgUp/PgDn scroll freely, and the borders carry ↑/↓
+		// when content lies beyond them.
 		const view = Math.max(1, available - 2);
 		this.view = view;
 		this.scroll = Math.max(0, Math.min(this.scroll, content.length - view));
-		if (selectedLine < this.scroll) {
-			this.scroll = selectedLine;
-		} else if (selectedLine >= this.scroll + view) {
-			this.scroll = selectedLine - view + 1;
+		if (this.followSelection) {
+			if (selectedLine < this.scroll) {
+				this.scroll = selectedLine;
+			} else if (selectedLine >= this.scroll + view) {
+				this.scroll = selectedLine - view + 1;
+			}
 		}
 		return [
 			this.boxBorder("top", this.scroll > 0),
@@ -502,6 +518,7 @@ export class UnblockPicker implements Focusable {
 		if (this.rows.length === 0) {
 			return;
 		}
+		this.followSelection = true;
 		this.selected = Math.max(0, Math.min(this.rows.length - 1, this.selected + delta));
 		if (this.selected < this.top) {
 			this.top = this.selected;
