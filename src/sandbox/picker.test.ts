@@ -124,18 +124,20 @@ describe("planFromMarks", () => {
 		{ section: "blocked", path: "/two/file", target: "/two", original: "/two/file", tool: "read", timestamp: 1 },
 		{ section: "blocked", path: "/other/file", target: "/two", original: "/other/file", tool: "bash", timestamp: 0 },
 		{ section: "repo", path: "/s", target: "/s", original: "/s", tool: "", timestamp: 0 },
+		{ section: "custom", path: "/mine", target: "/mine", original: "/mine", tool: "", timestamp: 0 },
 	];
 
 	it("groups marks by scope in row order and skips unmarked or unlocked-section rows", () => {
 		const marks = new Map<string, UnlockScope>([
 			["/one", "temporary"],
 			["/two/file", "repo"],
-			["/s", "global"], // repo rows are never marked by the component
+			["/mine", "global"], // custom rows are markable like blocked rows
+			["/s", "temporary"], // repo rows are never marked by the component
 		]);
 		expect(planFromMarks(rows, marks)).toEqual<UnlockPlan>({
 			temporary: ["/one"],
 			repo: ["/two"],
-			global: [],
+			global: ["/mine"],
 		});
 	});
 
@@ -276,6 +278,54 @@ describe("UnblockPicker", () => {
 		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
 	});
 
+	it("adds a typed custom path under a custom section and marks it like a blocked row", () => {
+		const dir = mkdtempSync(join(tmpdir(), "picker-custom-"));
+		const rows = buildPickerRows({ ...emptySources, history: [h("/gone", 1)] });
+		let result: UnlockPlan | undefined | "unset" = "unset";
+		const p = picker(rows, (r) => (result = r));
+		const text = (): string => p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text()).not.toContain("Custom path (");
+		expect(text()).toContain("custom path: press c");
+		p.handleInput("c");
+		p.handleInput(dir);
+		expect(text()).toContain(`${dir}▌`); // typing shows in the input
+		p.handleInput("\r"); // Enter in the input submits the path
+		expect(text()).toContain("Custom path (1)");
+		expect(text()).toContain(dir);
+		p.handleInput("g"); // the new custom row is selected and markable
+		expect(text()).toContain("[g]");
+		p.handleInput("\r"); // Enter outside the input exits and applies
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [dir] });
+	});
+
+	it("cancels the custom input with escape without adding a path", () => {
+		const rows = buildPickerRows({ ...emptySources, history: [h("/gone", 1)] });
+		let result: UnlockPlan | undefined | "unset" = "unset";
+		const p = picker(rows, (r) => (result = r));
+		p.handleInput("c");
+		p.handleInput("/no/such/path");
+		p.handleInput("\x1b"); // Escape leaves the input, not the picker
+		const text = p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text).not.toContain("Custom path (");
+		p.handleInput("\r"); // The picker still works: Enter exits normally
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+	});
+
+	it("does not add the same custom path twice", () => {
+		const dir = mkdtempSync(join(tmpdir(), "picker-dup-"));
+		const rows = buildPickerRows({ ...emptySources, history: [] });
+		const p = picker(rows, () => {});
+		p.handleInput("c");
+		p.handleInput(dir);
+		p.handleInput("\r");
+		p.handleInput("c");
+		p.handleInput(dir);
+		p.handleInput("\r");
+		const text = p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text).toContain("Custom path (1)");
+		expect(text.split(dir).length - 1).toBe(1); // the row appears exactly once
+	});
+
 	it("marks only the pressed row, not siblings sharing its unlock target", () => {
 		const root = mkdtempSync(join(tmpdir(), "picker-sib-"));
 		const one = join(root, "one.txt");
@@ -305,6 +355,7 @@ describe("hintLines", () => {
 			"r      perm unlock for repo",
 			"g      perm unlock globally",
 			"space  clear",
+			"c      add a custom path",
 			"↑↓     move",
 			"enter  save & exit",
 			"esc    cancel",
@@ -322,7 +373,7 @@ describe("hintLines", () => {
 
 	it("colors each key bright green", () => {
 		const text = hintLines(stubTheme).join("");
-		for (const key of ["t", "r", "g", "space", "↑↓", "enter", "esc"]) {
+		for (const key of ["t", "r", "g", "space", "c", "↑↓", "enter", "esc"]) {
 			expect(text).toContain(`\x1b[1;92m${key}\x1b[22;39m`);
 		}
 	});
