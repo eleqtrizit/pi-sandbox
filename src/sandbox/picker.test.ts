@@ -222,8 +222,26 @@ describe("UnblockPicker", () => {
 		expect(result).toEqual<UnlockPlan>({ temporary: [a], repo: [], global: [] });
 	});
 
-	it("renders a uniform-width box with all three sections", () => {
-		const rows = buildPickerRows({
+	it("shrinks the box to the terminal height and scrolls the list instead of clipping", () => {
+		const history = Array.from({ length: 10 }, (_, i) => h(`/p/${i}`, i));
+		const rows = buildPickerRows({ ...emptySources, history });
+		const p = new UnblockPicker(stubTheme, () => {}, rows, () => 24);
+		const plain = (lines: string[]): string => lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		const first = p.render(120);
+		expect(first.length).toBeLessThanOrEqual(24);
+		expect(plain(first)).toContain("/p/9"); // newest blocked row visible
+		expect(plain(first)).toContain("more (scroll down)"); // older rows hidden below
+		expect(plain(first)).not.toContain("/p/0");
+		p.handleInput("\x1b[6~"); // PageDown moves the window one page
+		const second = p.render(120);
+		expect(second.length).toBeLessThanOrEqual(24);
+		expect(plain(second)).not.toContain("/p/9");
+		expect(plain(second)).toContain("/p/4");
+		p.handleInput("\x1b[5~"); // PageUp returns to the first page
+		expect(plain(p.render(120))).toContain("/p/9");
+	});
+
+	it("renders a uniform-width box with all three sections", () => {		const rows = buildPickerRows({
 			...emptySources,
 			history: [h("/a/b/c", 2, "read", "~/a/b/c")],
 			repoPaths: ["/s"],

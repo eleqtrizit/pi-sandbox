@@ -175,7 +175,8 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				return;
 			}
 			const plan = await ctx.ui.custom<UnlockPlan | undefined>(
-				(_tui, theme, _keybindings, done) => new UnblockPicker(theme, done, rows),
+				(tui, theme, _keybindings, done) =>
+					new UnblockPicker(theme, done, rows, () => tui.terminal.rows - 2),
 				{ overlay: true },
 			);
 			if (plan === undefined) {

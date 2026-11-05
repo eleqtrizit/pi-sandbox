@@ -212,17 +212,23 @@ export class UnblockPicker implements Focusable {
 	private top = 0;
 	/** Marks keyed by blocked row path, so a keypress tags exactly one row. */
 	private marks = new Map<string, UnlockScope>();
+	/** Currently fitted list capacity: how many rows fit the viewport. */
+	private cap = MAX_VISIBLE_ROWS;
 
 	/**
 	 * @param theme Active pi theme for colors.
 	 * @param done Callback that ends the overlay: Enter passes the plan
 	 *   (empty when nothing is marked), Escape passes undefined.
 	 * @param rows Rows from buildPickerRows, in display order.
+	 * @param availableRows Terminal height the box must fit into; Infinity
+	 *   when the viewport is unknown. The visible list window shrinks until
+	 *   the whole box fits, and the box scrolls instead of being clipped.
 	 */
 	constructor(
 		private theme: Theme,
 		private done: (result: UnlockPlan | undefined) => void,
 		private rows: PickerRow[],
+		private availableRows: () => number = () => Number.POSITIVE_INFINITY,
 	) {
 		// Row content is cursor + mark tag + path; 76 covers the longest legend
 		// line, and HINT_MIN_WIDTH covers the two flat hint rows.
@@ -240,6 +246,14 @@ export class UnblockPicker implements Focusable {
 		}
 		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
 			this.done(planFromMarks(this.rows, this.marks));
+			return;
+		}
+		if (matchesKey(data, "pageUp")) {
+			this.move(-this.cap);
+			return;
+		}
+		if (matchesKey(data, "pageDown")) {
+			this.move(this.cap);
 			return;
 		}
 		if (matchesKey(data, "up") || matchesKey(data, "k")) {
@@ -276,6 +290,23 @@ export class UnblockPicker implements Focusable {
 	}
 
 	render(_width: number): string[] {
+		// Fit the box into the viewport: shrink the visible list window until
+		// the whole box fits the available rows. When the terminal is too
+		// short, the box scrolls (selection window, PageUp/PageDown) instead
+		// of being clipped at the top.
+		for (let cap = MAX_VISIBLE_ROWS; cap > 1; cap--) {
+			const lines = this.renderWithCap(cap);
+			if (lines.length <= this.availableRows()) {
+				this.cap = cap;
+				return lines;
+			}
+		}
+		this.cap = 1;
+		return this.renderWithCap(1);
+	}
+
+	/** Render the box with at most `cap` list rows visible. */
+	private renderWithCap(cap: number): string[] {
 		const th = this.theme;
 		const innerW = this.width - 2;
 		const lines: string[] = [];
@@ -295,7 +326,9 @@ export class UnblockPicker implements Focusable {
 			{ section: "blocked", title: `Blocked paths (${MAX_BLOCKED_ROWS} most recent)` },
 		];
 
-		const visibleRows = this.rows.slice(this.top, this.top + MAX_VISIBLE_ROWS);
+		// A shrunken window can leave top past the last page; clamp it.
+		const top = Math.min(this.top, Math.max(0, this.rows.length - cap));
+		const visibleRows = this.rows.slice(top, top + cap);
 		for (const { section, title } of sections) {
 			const sectionRows = this.rows.filter((r) => r.section === section);
 			lines.push(row(` ${brightGreen(`${title} (${sectionRows.length})`)}`));
@@ -354,8 +387,8 @@ export class UnblockPicker implements Focusable {
 		this.selected = Math.max(0, Math.min(this.rows.length - 1, this.selected + delta));
 		if (this.selected < this.top) {
 			this.top = this.selected;
-		} else if (this.selected >= this.top + MAX_VISIBLE_ROWS) {
-			this.top = this.selected - MAX_VISIBLE_ROWS + 1;
+		} else if (this.selected >= this.top + this.cap) {
+			this.top = this.selected - this.cap + 1;
 		}
 	}
 }
