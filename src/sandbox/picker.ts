@@ -36,6 +36,8 @@ export interface UnlockPlan {
 	repo: string[];
 	/** Targets to persist in the global sandbox config. */
 	global: string[];
+	/** Targets whose existing unlock is removed, whatever its scope. */
+	removals: string[];
 }
 
 /** Keyboard key for each unlock scope. */
@@ -47,7 +49,7 @@ const SCOPE_KEYS: ReadonlyMap<KeyId, UnlockScope> = new Map<KeyId, UnlockScope>(
 
 /** One row shown in the picker. */
 export interface PickerRow {
-	/** Which section the row belongs to. "blocked" and "custom" rows can be marked. */
+	/** Which section the row belongs to. All rows can be marked or cleared. */
 	section: "blocked" | "custom" | "repo" | "global";
 	/** Realpath-resolved path the row describes. */
 	path: string;
@@ -127,17 +129,29 @@ export function buildPickerRows(sources: PickerSources): PickerRow[] {
 }
 
 /**
- * Extract the unlock plan from the current marks (keyed by blocked or
- * custom row path),
- * preserving row order and dropping duplicate unlock targets: several marked
- * files in one directory yield a single unlock of that directory.
+ * Extract the unlock plan from the current marks (keyed by row path) and
+ * pending removals. Blocked, custom, and already-unlocked rows contribute
+ * marks; duplicate unlock targets are dropped (several marked files in one
+ * directory yield a single unlock of that directory). A mark or removal on
+ * an already-unlocked row removes it from its current scope first, and a
+ * scope mark adds it back under the new scope (recategorize).
  */
-export function planFromMarks(rows: PickerRow[], marks: ReadonlyMap<string, UnlockScope>): UnlockPlan {
-	const plan: UnlockPlan = { temporary: [], repo: [], global: [] };
+export function planFromMarks(
+	rows: PickerRow[],
+	marks: ReadonlyMap<string, UnlockScope>,
+	removals: ReadonlySet<string>,
+): UnlockPlan {
+	const plan: UnlockPlan = { temporary: [], repo: [], global: [], removals: [] };
 	const seen = new Set<string>();
+	const removedTargets = new Set<string>();
 	for (const row of rows) {
 		if (row.section === "repo" || row.section === "global") {
-			continue;
+			if (marks.get(row.path) !== undefined || removals.has(row.path)) {
+				if (!removedTargets.has(row.target)) {
+					removedTargets.add(row.target);
+					plan.removals.push(row.target);
+				}
+			}
 		}
 		const scope = marks.get(row.path);
 		if (scope === undefined || seen.has(row.target)) {
@@ -217,6 +231,8 @@ export class UnblockPicker implements Focusable {
 	private top = 0;
 	/** Marks keyed by blocked or custom row path, so a keypress tags exactly one row. */
 	private marks = new Map<string, UnlockScope>();
+	/** Unlocked rows pending removal, keyed by row path; space toggles them. */
+	private removals = new Set<string>();
 	/** True while the custom-path input at the bottom of the box has focus. */
 	private inputMode = false;
 	/** Text typed into the custom-path input. */
@@ -260,7 +276,7 @@ export class UnblockPicker implements Focusable {
 			return;
 		}
 		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
-			this.done(planFromMarks(this.rows, this.marks));
+			this.done(planFromMarks(this.rows, this.marks, this.removals));
 			return;
 		}
 		if (matchesKey(data, "pageUp")) {
@@ -290,15 +306,28 @@ export class UnblockPicker implements Focusable {
 			return;
 		}
 		const row = this.rows[this.selected];
-		if (row?.section !== "blocked" && row?.section !== "custom") {
+		if (row === undefined) {
 			return;
 		}
+		const unlockedSection = row.section === "repo" || row.section === "global";
 		if (matchesKey(data, "space")) {
-			this.marks.delete(row.path);
+			if (this.marks.delete(row.path)) {
+				// Clear a pending recategorize mark first.
+				return;
+			}
+			if (unlockedSection) {
+				// No pending mark: toggle removal of the unlock itself.
+				if (this.removals.has(row.path)) {
+					this.removals.delete(row.path);
+				} else {
+					this.removals.add(row.path);
+				}
+			}
 			return;
 		}
 		for (const [key, scope] of SCOPE_KEYS) {
 			if (matchesKey(data, key)) {
+				this.removals.delete(row.path);
 				if (this.marks.get(row.path) === scope) {
 					this.marks.delete(row.path);
 				} else {
@@ -472,24 +501,37 @@ export class UnblockPicker implements Focusable {
 			counts[scope]++;
 		}
 		const total = counts.temporary + counts.repo + counts.global;
-		if (total === 0) {
+		if (total === 0 && this.removals.size === 0) {
 			return "Nothing marked yet — press enter to open with the current state saved.";
 		}
-		return `Marked ${total} path(s): ${counts.temporary} session, ${counts.repo} repo, ${counts.global} global. Enter applies and saves.`;
+		return (
+			`Marked ${total} path(s): ${counts.temporary} session, ${counts.repo} repo, ${counts.global} global` +
+			(this.removals.size > 0 ? `, ${this.removals.size} removed` : "") +
+			". Enter applies and saves."
+		);
 	}
 
-	/** Render one row: cursor, mark tag in front of the path. */
+	/** Render one row: cursor, a four-column tag slot, then the path. */
 	private renderRow(r: PickerRow): string {
 		const th = this.theme;
 		const index = this.rows.indexOf(r);
 		const cursor = index === this.selected ? th.fg("accent", "❯") : " ";
-		if (r.section === "repo" || r.section === "global") {
-			return ` ${cursor} ${th.fg("success", "✓")} ${th.fg("dim", displayPath(r.path))}`;
+		const unlocked = r.section === "repo" || r.section === "global";
+		let tag: string;
+		if (this.removals.has(r.path)) {
+			// Pending removal of an existing unlock.
+			tag = `${th.fg("error", "[✗]")} `;
+		} else if (this.marks.has(r.path)) {
+			const mark = this.marks.get(r.path) as UnlockScope;
+			tag = `${th.fg("warning", `[${mark === "temporary" ? "t" : mark === "repo" ? "r" : "g"}]`)} `;
+		} else if (unlocked) {
+			tag = `${th.fg("success", " ✓  ")}`;
+		} else {
+			// Padded so unmarked and marked paths stay aligned.
+			tag = "    ";
 		}
-		const mark = this.marks.get(r.path);
-		// Padded so marked and unmarked paths stay aligned.
-		const tag = mark === undefined ? "    " : `${th.fg("warning", `[${mark === "temporary" ? "t" : mark === "repo" ? "r" : "g"}]`)} `;
-		return ` ${cursor} ${tag}${displayPath(r.path)}`;
+		const path = unlocked ? th.fg("dim", displayPath(r.path)) : displayPath(r.path);
+		return ` ${cursor} ${tag}${path}`;
 	}
 
 	/** Move the selection by delta, keeping it inside the rows and the window. */

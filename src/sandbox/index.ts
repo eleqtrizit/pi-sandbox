@@ -20,6 +20,7 @@ import { buildPickerRows, UnblockPicker, type UnlockPlan } from "./picker.js";
 import {
 	CONFIG_BASENAME,
 	addGlobalUnlockedPath,
+	removeGlobalUnlockedPath,
 	applyConfig,
 	currentConfig,
 	existingConfigPath,
@@ -286,6 +287,24 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		// Re-scan symlink targets first so the saved snapshot is current.
 		rescanSymlinkTargets(cwd);
 
+		// Removals and recategorizes leave their current scope before any
+		// adds: the repo/session set drops the target (the snapshot below
+		// then leaves it out), the global config file drops it too.
+		const removalsDone: string[] = [];
+		try {
+			for (const target of plan.removals) {
+				unlockedPaths.delete(target);
+				if (globalUnlockedPaths.has(target)) {
+					removeGlobalUnlockedPath(target);
+				}
+				globalUnlockedPaths.delete(target);
+				removalsDone.push(target);
+			}
+		} catch (err) {
+			hadError = true;
+			lines.push(`✗ Global config removal: ${err instanceof Error ? err.message : String(err)}`);
+		}
+
 		// Repo marks join unlockedPaths before the save, so the project
 		// config snapshot picks them up.
 		for (const target of plan.repo) {
@@ -333,6 +352,9 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			}
 		}
 
+		if (removalsDone.length > 0) {
+			lines.push(`🔒 Removed: ${removalsDone.map((p) => displayPath(p)).join("  ")}`);
+		}
 		if (plan.temporary.length > 0) {
 			lines.push(`🔓 Session: ${plan.temporary.map((p) => displayPath(p)).join("  ")}`);
 		}

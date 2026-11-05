@@ -14,6 +14,7 @@ import {
 	loadGlobalUnlockedPaths,
 	loadSandboxConfigFromPath,
 	reloadGlobalConfig,
+	removeGlobalUnlockedPath,
 	saveSandboxConfig,
 } from "./config.js";
 
@@ -173,6 +174,21 @@ describe("global config", () => {
 			addGlobalUnlockedPath("/b", path);
 			addGlobalUnlockedPath("/a", path);
 			expect(loadGlobalUnlockedPaths(path)).toEqual(["/a", "/b"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("removes a target and leaves the rest in place", () => {
+		const dir = mkdtempSync(join(tmpdir(), "cfg-global-rm-"));
+		const path = join(dir, "nested", "agent", configName);
+		try {
+			addGlobalUnlockedPath("/a", path);
+			addGlobalUnlockedPath("/b", path);
+			removeGlobalUnlockedPath("/a", path);
+			expect(loadGlobalUnlockedPaths(path)).toEqual(["/b"]);
+			removeGlobalUnlockedPath("/missing", path); // idempotent
+			expect(loadGlobalUnlockedPaths(path)).toEqual(["/b"]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

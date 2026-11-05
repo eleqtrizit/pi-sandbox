@@ -150,6 +150,22 @@ export function addGlobalUnlockedPath(target: string, path: string = globalConfi
 }
 
 /**
+ * Remove `target` from the global config file and save it immediately.
+ * Idempotent: a target that is absent changes nothing.
+ * @throws Error when the existing file is unreadable or cannot be written.
+ */
+export function removeGlobalUnlockedPath(target: string, path: string = globalConfigPath()): void {
+	const paths = loadGlobalUnlockedPaths(path).filter((p) => p !== target);
+	const cfg: Pick<SandboxConfig, "version" | "unlockedPaths" | "savedAt"> = {
+		version: 1,
+		unlockedPaths: paths,
+		savedAt: new Date().toISOString(),
+	};
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf-8");
+}
+
+/**
  * Replace the live global unlocked paths with the file's contents.
  * @throws Error when the file exists but is unreadable.
  */

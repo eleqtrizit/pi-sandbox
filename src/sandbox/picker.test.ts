@@ -127,18 +127,34 @@ describe("planFromMarks", () => {
 		{ section: "custom", path: "/mine", target: "/mine", original: "/mine", tool: "", timestamp: 0 },
 	];
 
-	it("groups marks by scope in row order and skips unmarked or unlocked-section rows", () => {
+	it("groups marks by scope in row order and skips unmarked rows", () => {
 		const marks = new Map<string, UnlockScope>([
 			["/one", "temporary"],
 			["/two/file", "repo"],
 			["/mine", "global"], // custom rows are markable like blocked rows
-			["/s", "temporary"], // repo rows are never marked by the component
+			["/s", "temporary"], // recategorize: removal plus a session add
 		]);
-		expect(planFromMarks(rows, marks)).toEqual<UnlockPlan>({
-			temporary: ["/one"],
+		expect(planFromMarks(rows, marks, new Set())).toEqual<UnlockPlan>({
+			temporary: ["/one", "/s"],
 			repo: ["/two"],
 			global: ["/mine"],
+			removals: ["/s"],
 		});
+	});
+
+	it("recategorizes an unlocked row: remove it, then add it under the new scope", () => {
+		const plan = planFromMarks(
+			rows,
+			new Map<string, UnlockScope>([["/s", "global"]]),
+			new Set(),
+		);
+		expect(plan.removals).toEqual(["/s"]);
+		expect(plan.global).toEqual(["/s"]);
+	});
+
+	it("turns a pending removal of an unlocked row into a plan removal", () => {
+		const plan = planFromMarks(rows, new Map(), new Set(["/s"]));
+		expect(plan).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [], removals: ["/s"] });
 	});
 
 	it("dedupes unlock targets that several marked rows share", () => {
@@ -149,13 +165,20 @@ describe("planFromMarks", () => {
 				["/two/file", "global"],
 				["/one", "temporary"],
 			]),
+			new Set(),
 		);
 		expect(plan.global).toEqual(["/two"]);
 		expect(plan.temporary).toEqual(["/one"]);
+		expect(plan.removals).toEqual([]);
 	});
 
 	it("returns an empty plan when nothing is marked", () => {
-		expect(planFromMarks(rows, new Map())).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+		expect(planFromMarks(rows, new Map(), new Set())).toEqual<UnlockPlan>({
+			temporary: [],
+			repo: [],
+			global: [],
+			removals: [],
+		});
 	});
 });
 
@@ -177,7 +200,7 @@ describe("UnblockPicker", () => {
 		const rows = buildPickerRows({ ...emptySources, history: [h("/x", 1)] });
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		picker(rows, (r) => (result = r)).handleInput("\r");
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [], removals: [] });
 	});
 
 	it("marks the selected blocked row, switches scope on a different key, and clears on a repeat", () => {
@@ -195,16 +218,30 @@ describe("UnblockPicker", () => {
 		p.handleInput("r"); // same row again: switch to repo
 		p.handleInput("r"); // third press clears it
 		p.handleInput("\r");
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [a], global: [] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [a], global: [], removals: [] });
 	});
 
-	it("ignores scope keys on repo-unlocked rows", () => {
+	it("recategorizes a repo-unlocked row with a scope key and removes it with space", () => {
 		const rows = buildPickerRows({ ...emptySources, repoPaths: ["/s"] });
 		let result: UnlockPlan | undefined | "unset" = "unset";
 		const p = picker(rows, (r) => (result = r));
-		p.handleInput("t");
+		const text = (): string => p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text()).toContain("✓"); // the green check before any key
+		p.handleInput("g"); // recategorize: repo row moves to global scope
+		expect(text()).toContain("[g]");
+		expect(text()).not.toContain("✓");
+		p.handleInput(" "); // space clears the pending mark first
+		expect(text()).toContain("✓");
+		p.handleInput(" "); // space again: pending removal of the unlock
+		expect(text()).toContain("[✗]");
+		expect(text()).not.toContain("✓");
+		p.handleInput(" "); // third press toggles removal back
+		expect(text()).toContain("✓");
+		p.handleInput(" ");
+		p.handleInput("g"); // a scope mark replaces a pending removal
+		expect(text()).toContain("[g]");
 		p.handleInput("\r");
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: ["/s"], removals: ["/s"] });
 	});
 
 	it("navigates with j/k and arrow keys across sections", () => {
@@ -221,7 +258,7 @@ describe("UnblockPicker", () => {
 		p.handleInput("j"); // clamped at the last row (still blocked)
 		p.handleInput("t");
 		p.handleInput("\r");
-		expect(result).toEqual<UnlockPlan>({ temporary: [a], repo: [], global: [] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [a], repo: [], global: [], removals: [] });
 	});
 
 	it("scrolls the whole box with the arrow keys when the terminal is shorter", () => {
@@ -299,7 +336,7 @@ describe("UnblockPicker", () => {
 		p.handleInput("g");
 		p.handleInput(" ");
 		p.handleInput("\r");
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [], removals: [] });
 	});
 
 	it("adds a typed custom path under a custom section and marks it like a blocked row", () => {
@@ -319,7 +356,7 @@ describe("UnblockPicker", () => {
 		p.handleInput("g"); // the new custom row is selected and markable
 		expect(text()).toContain("[g]");
 		p.handleInput("\r"); // Enter outside the input exits and applies
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [dir] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [dir], removals: [] });
 	});
 
 	it("cancels the custom input with escape without adding a path", () => {
@@ -332,7 +369,7 @@ describe("UnblockPicker", () => {
 		const text = p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
 		expect(text).not.toContain("Custom path (");
 		p.handleInput("\r"); // The picker still works: Enter exits normally
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [], removals: [] });
 	});
 
 	it("does not add the same custom path twice", () => {
@@ -366,7 +403,7 @@ describe("UnblockPicker", () => {
 		expect(text).toContain("[g] ");
 		p.handleInput("\r");
 		// The plan still unlocks the shared parent once.
-		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [root] });
+		expect(result).toEqual<UnlockPlan>({ temporary: [], repo: [], global: [root], removals: [] });
 	});
 });
 
