@@ -27,6 +27,39 @@ export function summarizePaths(paths: string[], max: number): string {
 	return `${list.slice(0, Math.max(0, max - 1))}…`;
 }
 
+/**
+ * Menu label for the picker's "tell the agent" option, covering unlocks,
+ * re-locks, or both. Paths are truncated so the label stays one line.
+ */
+export function notifyChoiceLabel(adds: string[], removals: string[]): string {
+	if (adds.length > 0 && removals.length > 0) {
+		return `Tell the agent: unlocked ${summarizePaths(adds, 40)}, locked ${summarizePaths(removals, 40)}`;
+	}
+	if (removals.length > 0) {
+		return `Tell the agent: ${summarizePaths(removals, 60)} have been locked again`;
+	}
+	return `Tell the agent: ${summarizePaths(adds, 60)} have been unlocked`;
+}
+
+/**
+ * Follow-up message content describing the sandbox change in full, without
+ * truncation, so the agent sees every path.
+ */
+export function followUpContent(adds: string[], removals: string[]): string {
+	const parts: string[] = [];
+	if (adds.length > 0) {
+		parts.push(
+			`The sandbox has unlocked the following directories; everything under them is now allowed: ${adds.join(", ")}`,
+		);
+	}
+	if (removals.length > 0) {
+		parts.push(
+			`The sandbox has locked the following directories again; access under them is now blocked: ${removals.join(", ")}`,
+		);
+	}
+	return parts.join("\n");
+}
+
 /** Human-readable elapsed time since a timestamp, for blocked-path display. */
 export function ageMs(ts: number): string {
 	const ms = Date.now() - ts;

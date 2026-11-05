@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildBanner, statusLine, summarizePaths } from "./display.js";
+import { buildBanner, followUpContent, notifyChoiceLabel, statusLine, summarizePaths } from "./display.js";
 import { registerAllowedPath } from "./registry.js";
 import { blockedHistory, resetState, sandboxState } from "./state.js";
 
@@ -71,5 +71,40 @@ describe("summarizePaths", () => {
 
 	it("returns a bare ellipsis when even one path cannot fit", () => {
 		expect(summarizePaths(["~\/a"], 1)).toBe("…");
+	});
+});
+
+describe("notifyChoiceLabel", () => {
+	it("labels pure unlocks", () => {
+		expect(notifyChoiceLabel(["~/a"], [])).toBe("Tell the agent: ~/a have been unlocked");
+	});
+
+	it("labels re-locks", () => {
+		expect(notifyChoiceLabel([], ["~/a", "~/b"])).toBe("Tell the agent: ~/a, ~/b have been locked again");
+	});
+
+	it("labels a combined change without double-telling the verbs", () => {
+		expect(notifyChoiceLabel(["~/a"], ["~/b"])).toBe("Tell the agent: unlocked ~/a, locked ~/b");
+	});
+});
+
+describe("followUpContent", () => {
+	it("describes unlocks with full paths", () => {
+		expect(followUpContent(["~/a", "~/b"], [])).toBe(
+			"The sandbox has unlocked the following directories; everything under them is now allowed: ~/a, ~/b",
+		);
+	});
+
+	it("describes re-locks with full paths", () => {
+		expect(followUpContent([], ["~/a"])).toBe(
+			"The sandbox has locked the following directories again; access under them is now blocked: ~/a",
+		);
+	});
+
+	it("describes both changes in one message", () => {
+		expect(followUpContent(["~/a"], ["~/b"])).toBe(
+			"The sandbox has unlocked the following directories; everything under them is now allowed: ~/a\n" +
+				"The sandbox has locked the following directories again; access under them is now blocked: ~/b",
+		);
 	});
 });

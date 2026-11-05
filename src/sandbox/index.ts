@@ -29,7 +29,7 @@ import {
 	reloadGlobalConfig,
 	saveSandboxConfig,
 } from "./config.js";
-import { buildBanner, displayPath, statusLine, summarizePaths } from "./display.js";
+import { buildBanner, displayPath, followUpContent, notifyChoiceLabel, statusLine } from "./display.js";
 
 /** Sandbox-root paragraph prepended to the system prompt so the agent knows its confinement. */
 export function sandboxSystemPromptAddendum(sandboxRoot: string): string {
@@ -185,21 +185,21 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 				ctx.ui.notify("Sandbox picker cancelled — nothing changed.", "info");
 				return;
 			}
-			const { lines, hadError, applied } = applyUnlockPlan(ctx.cwd, plan);
+			const { lines, hadError, applied, removed } = applyUnlockPlan(ctx.cwd, plan);
 			ctx.ui.notify(lines.join("\n"), hadError ? "error" : "info");
-			if (applied.length > 0 && ctx.hasUI) {
+			const addsShown = applied.map((p) => displayPath(p));
+			const removalsShown = removed.map((p) => displayPath(p));
+			if ((addsShown.length > 0 || removalsShown.length > 0) && ctx.hasUI) {
 				// Second menu: tell the agent, or finish quietly. Escape and
 				// an unset choice fall through to the quiet option; the
 				// config is already saved at this point.
-				const NOTIFY = `Tell the agent: ${summarizePaths(applied.map((p) => displayPath(p)), 60)} have been unlocked`;
+				const NOTIFY = notifyChoiceLabel(addsShown, removalsShown);
 				const QUIET = "Finish without notifying the agent";
 				const choice = await ctx.ui.select("Sandbox paths applied", [NOTIFY, QUIET]);
 				if (choice === NOTIFY) {
 					pi.sendMessage({
 						customType: "sandbox-paths",
-						content:
-							`The sandbox has unlocked the following directories; everything under them is now allowed: ` +
-							applied.map((p) => displayPath(p)).join(", "),
+						content: followUpContent(addsShown, removalsShown),
 						display: false,
 					}, { deliverAs: "followUp", triggerTurn: true });
 				}
@@ -277,10 +277,14 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 	 * Apply an unlock plan from /sandbox-unblock-paths and persist the sandbox
 	 * state. Repo marks land in the project config through the saved snapshot,
 	 * global marks in the global config file, and temporary marks stay
-	 * session-only. Enter in the picker saves unconditionally, which folds the
-	 * old /sandbox-save-config command into this one.
+	 * session-only. Removals drop their targets from the repo set and the
+	 * global config file. Enter in the picker saves unconditionally, which
+	 * folds the old /sandbox-save-config command into this one.
 	 */
-	function applyUnlockPlan(cwd: string, plan: UnlockPlan): { lines: string[]; hadError: boolean; applied: string[] } {
+	function applyUnlockPlan(
+		cwd: string,
+		plan: UnlockPlan,
+	): { lines: string[]; hadError: boolean; applied: string[]; removed: string[] } {
 		const lines: string[] = [];
 		let hadError = false;
 
@@ -364,11 +368,11 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 		if (globalApplied.length > 0) {
 			lines.push(`🔓 Global (saved to ${displayPath(globalConfigPath())}): ${globalApplied.map((p) => displayPath(p)).join("  ")}`);
 		}
-		if (applied.length === 0) {
+		if (applied.length === 0 && removalsDone.length === 0) {
 			lines.push("No paths marked — only the sandbox config was saved.");
 		}
 
-		return { lines, hadError, applied };
+		return { lines, hadError, applied, removed: removalsDone };
 	}
 
 	// The kernel denies bash file access without telling pi, so read the denied
