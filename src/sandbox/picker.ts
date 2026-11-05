@@ -6,8 +6,9 @@
  * from the persistent journal and the in-memory history), and paths added
  * by hand. The user moves with the arrow keys, marks rows with t
  * (temporary, this session), r (repo config), or g (global config), clears
- * a mark with space, types a custom path to add with c, and exits with
- * Enter, which applies the marks and saves the sandbox config
+ * a mark with space, types a custom path to add with c, edits the selected
+ * path in place with e, and exits with Enter, which applies the marks and
+ * saves the sandbox config
  * automatically. Escape discards the marks. When the terminal is shorter
  * than the box, the whole box scrolls inside the viewport.
  *
@@ -130,11 +131,11 @@ export function buildPickerRows(sources: PickerSources): PickerRow[] {
 
 /**
  * Extract the unlock plan from the current marks (keyed by row path) and
- * pending removals. Blocked, custom, and already-unlocked rows contribute
- * marks; duplicate unlock targets are dropped (several marked files in one
- * directory yield a single unlock of that directory). A mark or removal on
- * an already-unlocked row removes it from its current scope first, and a
- * scope mark adds it back under the new scope (recategorize).
+ * pending removals. Marks contribute adds for every row; duplicate unlock
+ * targets are dropped (several marked files in one directory yield a single
+ * unlock of that directory). All removals come from the removals set: a
+ * removal or recategorize keypress adds the row's current path, and an edit
+ * adds the unlocked row's original path.
  */
 export function planFromMarks(
 	rows: PickerRow[],
@@ -143,22 +144,20 @@ export function planFromMarks(
 ): UnlockPlan {
 	const plan: UnlockPlan = { temporary: [], repo: [], global: [], removals: [] };
 	const seen = new Set<string>();
-	const removedTargets = new Set<string>();
 	for (const row of rows) {
-		if (row.section === "repo" || row.section === "global") {
-			if (marks.get(row.path) !== undefined || removals.has(row.path)) {
-				if (!removedTargets.has(row.target)) {
-					removedTargets.add(row.target);
-					plan.removals.push(row.target);
-				}
-			}
-		}
 		const scope = marks.get(row.path);
 		if (scope === undefined || seen.has(row.target)) {
 			continue;
 		}
 		seen.add(row.target);
 		plan[scope].push(row.target);
+	}
+	const removedTargets = new Set<string>();
+	for (const path of removals) {
+		if (!removedTargets.has(path)) {
+			removedTargets.add(path);
+			plan.removals.push(path);
+		}
 	}
 	return plan;
 }
@@ -184,6 +183,7 @@ const HINT_ENTRIES: readonly HintEntry[] = [
 	{ key: "g", label: "perm unlock globally" },
 	{ key: "space", label: "clear" },
 	{ key: "c", label: "add a custom path" },
+	{ key: "e", label: "edit the path" },
 	{ key: "↑↓", label: "move & scroll the box" },
 	{ key: "enter", label: "save & exit" },
 	{ key: "esc", label: "cancel" },
@@ -237,6 +237,8 @@ export class UnblockPicker implements Focusable {
 	private inputMode = false;
 	/** Text typed into the custom-path input. */
 	private inputText = "";
+	/** Row being edited in place while the input has focus; null when adding. */
+	private editingRow: PickerRow | null = null;
 	/** Scroll offset of the whole box, when it is taller than the viewport. */
 	private scroll = 0;
 	/** Viewport height in content lines; Infinity when the whole box fits. */
@@ -300,7 +302,20 @@ export class UnblockPicker implements Focusable {
 		}
 		if (matchesKey(data, "c")) {
 			this.inputMode = true;
+			this.editingRow = null;
 			this.inputText = "";
+			// Reveal the input row at the bottom of the box.
+			this.scroll = Number.MAX_SAFE_INTEGER;
+			return;
+		}
+		if (matchesKey(data, "e")) {
+			const row = this.rows[this.selected];
+			if (row === undefined) {
+				return;
+			}
+			this.inputMode = true;
+			this.editingRow = row;
+			this.inputText = row.path;
 			// Reveal the input row at the bottom of the box.
 			this.scroll = Number.MAX_SAFE_INTEGER;
 			return;
@@ -312,7 +327,9 @@ export class UnblockPicker implements Focusable {
 		const unlockedSection = row.section === "repo" || row.section === "global";
 		if (matchesKey(data, "space")) {
 			if (this.marks.delete(row.path)) {
-				// Clear a pending recategorize mark first.
+				// Clear a pending recategorize mark together with the removal
+				// it implies, so the row returns to its check.
+				this.removals.delete(row.path);
 				return;
 			}
 			if (unlockedSection) {
@@ -327,11 +344,16 @@ export class UnblockPicker implements Focusable {
 		}
 		for (const [key, scope] of SCOPE_KEYS) {
 			if (matchesKey(data, key)) {
-				this.removals.delete(row.path);
 				if (this.marks.get(row.path) === scope) {
 					this.marks.delete(row.path);
+					this.removals.delete(row.path); // toggled off: no pending change
 				} else {
 					this.marks.set(row.path, scope);
+					if (unlockedSection) {
+						// A recategorize takes the current unlock away first;
+						// the mark adds the path back under the new scope.
+						this.removals.add(row.path);
+					}
 				}
 				return;
 			}
@@ -346,11 +368,16 @@ export class UnblockPicker implements Focusable {
 	private handleInputMode(data: string): void {
 		if (matchesKey(data, "escape")) {
 			this.inputMode = false;
+			this.editingRow = null;
 			this.inputText = "";
 			return;
 		}
 		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
-			this.submitCustomPath();
+			if (this.editingRow !== null) {
+				this.submitEditedPath();
+			} else {
+				this.submitCustomPath();
+			}
 			return;
 		}
 		if (matchesKey(data, "backspace")) {
@@ -361,6 +388,42 @@ export class UnblockPicker implements Focusable {
 		if (/^[\x20-\x7e]+$/.test(data)) {
 			this.inputText += data;
 		}
+	}
+
+	/**
+	 * Replace the edited row's path with the typed one. An unlocked row's
+	 * original path goes to removals and the new path is pre-marked with the
+	 * row's own scope, so a plain edit keeps it unlocked in the same place.
+	 */
+	private submitEditedPath(): void {
+		this.inputMode = false;
+		const row = this.editingRow;
+		this.editingRow = null;
+		const typed = this.inputText.trim();
+		this.inputText = "";
+		if (row === null || typed === "") {
+			return; // An empty edit is a cancel.
+		}
+		const newPath = resolve(expandTilde(typed));
+		if (newPath === row.path) {
+			return; // Unchanged.
+		}
+		const oldPath = row.path;
+		const unlockedSection = row.section === "repo" || row.section === "global";
+		// Re-key any pending mark to the new path.
+		const pending = this.marks.get(oldPath);
+		this.marks.delete(oldPath);
+		this.removals.delete(oldPath);
+		if (unlockedSection) {
+			this.removals.add(oldPath);
+			const scope: UnlockScope = row.section === "repo" ? "repo" : "global";
+			this.marks.set(newPath, pending ?? scope);
+		} else if (pending !== undefined) {
+			this.marks.set(newPath, pending);
+		}
+		row.path = newPath;
+		row.target = unlockTargetFor(newPath);
+		row.original = typed;
 	}
 
 	/** Add the typed path as a custom row and select it; duplicates reselect. */
@@ -481,7 +544,8 @@ export class UnblockPicker implements Focusable {
 	private renderInput(): string {
 		const th = this.theme;
 		if (this.inputMode) {
-			return ` ${th.fg("accent", "custom path:")} ${this.inputText}${th.fg("accent", "▌")}`;
+			const label = this.editingRow !== null ? "edit path:" : "custom path:";
+			return ` ${th.fg("accent", label)} ${this.inputText}${th.fg("accent", "▌")}`;
 		}
 		return ` ${th.fg("dim", "custom path: press c, type, enter to add")}`;
 	}
@@ -518,12 +582,12 @@ export class UnblockPicker implements Focusable {
 		const cursor = index === this.selected ? th.fg("accent", "❯") : " ";
 		const unlocked = r.section === "repo" || r.section === "global";
 		let tag: string;
-		if (this.removals.has(r.path)) {
-			// Pending removal of an existing unlock.
-			tag = `${th.fg("error", "[✗]")} `;
-		} else if (this.marks.has(r.path)) {
+		if (this.marks.has(r.path)) {
 			const mark = this.marks.get(r.path) as UnlockScope;
 			tag = `${th.fg("warning", `[${mark === "temporary" ? "t" : mark === "repo" ? "r" : "g"}]`)} `;
+		} else if (this.removals.has(r.path)) {
+			// Pending removal of an existing unlock.
+			tag = `${th.fg("error", "[✗]")} `;
 		} else if (unlocked) {
 			tag = `${th.fg("success", " ✓  ")}`;
 		} else {

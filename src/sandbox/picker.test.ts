@@ -134,7 +134,7 @@ describe("planFromMarks", () => {
 			["/mine", "global"], // custom rows are markable like blocked rows
 			["/s", "temporary"], // recategorize: removal plus a session add
 		]);
-		expect(planFromMarks(rows, marks, new Set())).toEqual<UnlockPlan>({
+		expect(planFromMarks(rows, marks, new Set(["/s"]))).toEqual<UnlockPlan>({
 			temporary: ["/one", "/s"],
 			repo: ["/two"],
 			global: ["/mine"],
@@ -146,10 +146,15 @@ describe("planFromMarks", () => {
 		const plan = planFromMarks(
 			rows,
 			new Map<string, UnlockScope>([["/s", "global"]]),
-			new Set(),
+			new Set(["/s"]),
 		);
 		expect(plan.removals).toEqual(["/s"]);
 		expect(plan.global).toEqual(["/s"]);
+	});
+
+	it("keeps orphaned removals of paths that no row shows, like edited originals", () => {
+		const plan = planFromMarks(rows, new Map(), new Set(["/edited-away"]));
+		expect(plan.removals).toEqual(["/edited-away"]);
 	});
 
 	it("turns a pending removal of an unlocked row into a plan removal", () => {
@@ -387,6 +392,54 @@ describe("UnblockPicker", () => {
 		expect(text.split(dir).length - 1).toBe(1); // the row appears exactly once
 	});
 
+	it("edits a blocked row in place with e", () => {
+		const elsewhere = mkdtempSync(join(tmpdir(), "picker-edit-"));
+		const rows = buildPickerRows({ ...emptySources, history: [h("/gone", 1)] });
+		let result: UnlockPlan | undefined | "unset" = "unset";
+		const p = picker(rows, (r) => (result = r));
+		const text = (): string => p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		expect(text()).toContain("/gone");
+		p.handleInput("e"); // prefill with the row's path
+		expect(text()).toContain("edit path: /gone");
+		for (let i = 0; i < 5; i++) {
+			p.handleInput("\x7f"); // backspace five times clears "/gone"
+		}
+		p.handleInput(elsewhere);
+		expect(text()).toContain(`edit path: ${elsewhere}`);
+		p.handleInput("\r"); // enter applies the edit
+		expect(text()).toContain(elsewhere);
+		expect(text()).not.toContain("/gone");
+		p.handleInput("g"); // the edited row marks like any blocked row
+		p.handleInput("\r");
+		expect(result).toEqual<UnlockPlan>({
+			temporary: [],
+			repo: [],
+			global: [elsewhere],
+			removals: [],
+		});
+	});
+
+	it("editing a repo-unlocked row removes the original and keeps the repo scope", () => {
+		const moved = mkdtempSync(join(tmpdir(), "picker-moved-"));
+		const rows = buildPickerRows({ ...emptySources, repoPaths: ["/s"] });
+		let result: UnlockPlan | undefined | "unset" = "unset";
+		const p = picker(rows, (r) => (result = r));
+		const text = (): string => p.render(200).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+		p.handleInput("e");
+		p.handleInput("\x7f");
+		p.handleInput("\x7f"); // "/s" - two backspaces
+		p.handleInput(moved);
+		p.handleInput("\r");
+		expect(text()).toContain(`[r] ${moved}`); // pre-marked with the row's own scope
+		p.handleInput("\r"); // exit: apply
+		expect(result).toEqual<UnlockPlan>({
+			temporary: [],
+			repo: [moved],
+			global: [],
+			removals: ["/s"],
+		});
+	});
+
 	it("marks only the pressed row, not siblings sharing its unlock target", () => {
 		const root = mkdtempSync(join(tmpdir(), "picker-sib-"));
 		const one = join(root, "one.txt");
@@ -417,6 +470,7 @@ describe("hintLines", () => {
 			"g      perm unlock globally",
 			"space  clear",
 			"c      add a custom path",
+			"e      edit the path",
 			"↑↓     move & scroll the box",
 			"enter  save & exit",
 			"esc    cancel",
@@ -434,7 +488,7 @@ describe("hintLines", () => {
 
 	it("colors each key bright green", () => {
 		const text = hintLines(stubTheme).join("");
-		for (const key of ["t", "r", "g", "space", "c", "↑↓", "enter", "esc"]) {
+		for (const key of ["t", "r", "g", "space", "c", "e", "↑↓", "enter", "esc"]) {
 			expect(text).toContain(`\x1b[1;92m${key}\x1b[22;39m`);
 		}
 	});
