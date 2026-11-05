@@ -170,8 +170,7 @@ const HINT_ENTRIES: readonly HintEntry[] = [
 	{ key: "g", label: "perm unlock globally" },
 	{ key: "space", label: "clear" },
 	{ key: "c", label: "add a custom path" },
-	{ key: "↑↓", label: "move" },
-	{ key: "PgUp/PgDn", label: "scroll the box" },
+	{ key: "↑↓", label: "move & scroll the box" },
 	{ key: "enter", label: "save & exit" },
 	{ key: "esc", label: "cancel" },
 ];
@@ -226,12 +225,6 @@ export class UnblockPicker implements Focusable {
 	private scroll = 0;
 	/** Viewport height in content lines; Infinity when the whole box fits. */
 	private view = Number.POSITIVE_INFINITY;
-	/**
-	 * True when the viewport should track the selection (movement and marking);
-	 * false after PgUp/PgDn scroll the box freely. c sets it false and jumps
-	 * to the bottom so the custom-path input comes into view.
-	 */
-	private followSelection = true;
 
 	/**
 	 * @param theme Active pi theme for colors.
@@ -271,21 +264,21 @@ export class UnblockPicker implements Focusable {
 			return;
 		}
 		if (matchesKey(data, "pageUp")) {
-			// Page keys scroll the box itself; the selection stays put.
+			// Page keys jump a full page; the selection stays put.
 			this.scroll -= this.pageStep();
-			this.followSelection = false;
 			return;
 		}
 		if (matchesKey(data, "pageDown")) {
 			this.scroll += this.pageStep();
-			this.followSelection = false;
 			return;
 		}
 		if (matchesKey(data, "up") || matchesKey(data, "k")) {
+			this.scroll -= 1;
 			this.move(-1);
 			return;
 		}
 		if (matchesKey(data, "down") || matchesKey(data, "j")) {
+			this.scroll += 1;
 			this.move(1);
 			return;
 		}
@@ -294,15 +287,12 @@ export class UnblockPicker implements Focusable {
 			this.inputText = "";
 			// Reveal the input row at the bottom of the box.
 			this.scroll = Number.MAX_SAFE_INTEGER;
-			this.followSelection = false;
 			return;
 		}
 		const row = this.rows[this.selected];
 		if (row?.section !== "blocked" && row?.section !== "custom") {
 			return;
 		}
-		// Marking acts on the selection, so bring it back into view.
-		this.followSelection = true;
 		if (matchesKey(data, "space")) {
 			this.marks.delete(row.path);
 			return;
@@ -375,7 +365,7 @@ export class UnblockPicker implements Focusable {
 	}
 
 	render(_width: number): string[] {
-		const { lines: content, selectedLine } = this.contentLines();
+		const content = this.contentLines();
 		const available = this.availableRows();
 		if (!Number.isFinite(available) || content.length + 2 <= available) {
 			this.view = Number.POSITIVE_INFINITY;
@@ -383,19 +373,12 @@ export class UnblockPicker implements Focusable {
 			return [this.boxBorder("top", false), ...content, this.boxBorder("bottom", false)];
 		}
 		// The terminal is shorter than the box: every row keeps its line and
-		// the whole box scrolls. Selection movement and marking track the
-		// selected line; PgUp/PgDn scroll freely, and the borders carry ↑/↓
-		// when content lies beyond them.
+		// the whole box scrolls under the user's keys (↑↓ one line, PgUp/PgDn
+		// a page, c jumps to the input). The borders carry ↑/↓ when content
+		// lies beyond them.
 		const view = Math.max(1, available - 2);
 		this.view = view;
 		this.scroll = Math.max(0, Math.min(this.scroll, content.length - view));
-		if (this.followSelection) {
-			if (selectedLine < this.scroll) {
-				this.scroll = selectedLine;
-			} else if (selectedLine >= this.scroll + view) {
-				this.scroll = selectedLine - view + 1;
-			}
-		}
 		return [
 			this.boxBorder("top", this.scroll > 0),
 			...content.slice(this.scroll, this.scroll + view),
@@ -419,11 +402,10 @@ export class UnblockPicker implements Focusable {
 		return th.fg("border", `${head}${inner}${tail}`);
 	}
 
-	/** All box lines between the borders, plus the content line the selection sits on. */
-	private contentLines(): { lines: string[]; selectedLine: number } {
+	/** All box lines between the borders. */
+	private contentLines(): string[] {
 		const th = this.theme;
 		const lines: string[] = [];
-		let selectedLine = 0;
 		lines.push(this.boxRow(` ${th.fg("accent", "🛡 Sandbox paths")}`));
 		for (const hint of hintLines(th)) {
 			lines.push(this.boxRow(`  ${hint}`));
@@ -452,9 +434,6 @@ export class UnblockPicker implements Focusable {
 			}
 			const visibleSection = visibleRows.filter((r) => r.section === section);
 			for (const r of visibleSection) {
-				if (this.rows[this.selected] === r) {
-					selectedLine = lines.length;
-				}
 				lines.push(this.boxRow(this.renderRow(r)));
 			}
 			const hidden = sectionRows.length - visibleSection.length;
@@ -466,7 +445,7 @@ export class UnblockPicker implements Focusable {
 		lines.push(this.boxRow(this.renderInput()));
 		lines.push(this.boxRow(""));
 		lines.push(this.boxRow(` ${th.fg("accent", this.legendLine())}`));
-		return { lines, selectedLine };
+		return lines;
 	}
 
 	/** The always-visible custom-path input row at the bottom of the box. */
@@ -518,7 +497,6 @@ export class UnblockPicker implements Focusable {
 		if (this.rows.length === 0) {
 			return;
 		}
-		this.followSelection = true;
 		this.selected = Math.max(0, Math.min(this.rows.length - 1, this.selected + delta));
 		if (this.selected < this.top) {
 			this.top = this.selected;
