@@ -18,6 +18,15 @@ export function displayPath(p: string): string {
 	return p;
 }
 
+/** Comma-join paths for a one-line label, truncating with an ellipsis past `max` characters. */
+export function summarizePaths(paths: string[], max: number): string {
+	const list = paths.join(", ");
+	if (list.length <= max) {
+		return list;
+	}
+	return `${list.slice(0, Math.max(0, max - 1))}…`;
+}
+
 /** Human-readable elapsed time since a timestamp, for blocked-path display. */
 export function ageMs(ts: number): string {
 	const ms = Date.now() - ts;

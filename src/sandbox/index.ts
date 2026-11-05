@@ -28,7 +28,7 @@ import {
 	reloadGlobalConfig,
 	saveSandboxConfig,
 } from "./config.js";
-import { buildBanner, displayPath, statusLine } from "./display.js";
+import { buildBanner, displayPath, statusLine, summarizePaths } from "./display.js";
 
 /** Sandbox-root paragraph prepended to the system prompt so the agent knows its confinement. */
 export function sandboxSystemPromptAddendum(sandboxRoot: string): string {
@@ -186,14 +186,22 @@ export default function registerSandbox(pi: ExtensionAPI): void {
 			}
 			const { lines, hadError, applied } = applyUnlockPlan(ctx.cwd, plan);
 			ctx.ui.notify(lines.join("\n"), hadError ? "error" : "info");
-			if (applied.length > 0) {
-				pi.sendMessage({
-					customType: "sandbox-paths",
-					content:
-						`The sandbox has unlocked the following directories; everything under them is now allowed: ` +
-						applied.map((p) => displayPath(p)).join(", "),
-					display: false,
-				}, { deliverAs: "followUp", triggerTurn: true });
+			if (applied.length > 0 && ctx.hasUI) {
+				// Second menu: tell the agent, or finish quietly. Escape and
+				// an unset choice fall through to the quiet option; the
+				// config is already saved at this point.
+				const NOTIFY = `Tell the agent: ${summarizePaths(applied.map((p) => displayPath(p)), 60)} have been unlocked`;
+				const QUIET = "Finish without notifying the agent";
+				const choice = await ctx.ui.select("Sandbox paths applied", [NOTIFY, QUIET]);
+				if (choice === NOTIFY) {
+					pi.sendMessage({
+						customType: "sandbox-paths",
+						content:
+							`The sandbox has unlocked the following directories; everything under them is now allowed: ` +
+							applied.map((p) => displayPath(p)).join(", "),
+						display: false,
+					}, { deliverAs: "followUp", triggerTurn: true });
+				}
 			}
 			refreshStatus(ctx);
 		},

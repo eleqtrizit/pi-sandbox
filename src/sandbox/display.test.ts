@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildBanner, statusLine } from "./display.js";
+import { buildBanner, statusLine, summarizePaths } from "./display.js";
 import { registerAllowedPath } from "./registry.js";
 import { blockedHistory, resetState, sandboxState } from "./state.js";
 
@@ -55,5 +55,21 @@ describe("buildBanner", () => {
 		expect(banner).toContain("Extension paths (1):");
 		expect(banner).toContain(dir);
 		resetState();
+	});
+});
+
+describe("summarizePaths", () => {
+	it("joins paths unchanged when the list fits", () => {
+		expect(summarizePaths(["~\/a", "~\/b"], 60)).toBe("~\/a, ~\/b");
+	});
+
+	it("truncates a long list to the max width with an ellipsis", () => {
+		const summary = summarizePaths(["~\/a", "~\/b", "~\/c"], 10);
+		expect(summary.length).toBe(10);
+		expect(summary.endsWith("…")).toBe(true);
+	});
+
+	it("returns a bare ellipsis when even one path cannot fit", () => {
+		expect(summarizePaths(["~\/a"], 1)).toBe("…");
 	});
 });
